@@ -17,12 +17,10 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Crear config.env
-        run: |
-          echo "GESDATTA_EMAIL=${{ secrets.GESDATTA_EMAIL }}" > config.env
-          echo "GESDATTA_PASSWORD=${{ secrets.GESDATTA_PASSWORD }}" >> config.env
-
       - name: Correr ingestor
+        env:
+          GESDATTA_EMAIL: ${{ secrets.GESDATTA_EMAIL }}
+          GESDATTA_PASSWORD: ${{ secrets.GESDATTA_PASSWORD }}
         run: python ingestor.py --desde 2026-06-01 --hasta 2026-06-30 --periodo Junio
 
       - name: Instalar Netlify CLI
