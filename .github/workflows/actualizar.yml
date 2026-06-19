@@ -1,1 +1,35 @@
+name: Actualizar Dashboard LENO
 
+on:
+  schedule:
+    - cron: '0 9,15,21 * * *'
+  workflow_dispatch:
+
+jobs:
+  actualizar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar codigo
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Crear config.env
+        run: |
+          echo "GESDATTA_EMAIL=${{ secrets.GESDATTA_EMAIL }}" > config.env
+          echo "GESDATTA_PASSWORD=${{ secrets.GESDATTA_PASSWORD }}" >> config.env
+
+      - name: Correr ingestor
+        run: python ingestor.py --desde 2026-06-01 --hasta 2026-06-30 --periodo Junio
+
+      - name: Instalar Netlify CLI
+        run: npm install -g netlify-cli
+
+      - name: Subir a Netlify
+        run: netlify deploy --prod --dir . --filter index.html
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
