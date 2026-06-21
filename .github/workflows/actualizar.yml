@@ -2,12 +2,24 @@ name: Actualizar Dashboard LENO
 
 on:
   schedule:
-    - cron: '0 9,15,21 * * *'
+    - cron: '0 8,13,19 * * *'
   workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
   actualizar:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Descargar codigo
         uses: actions/checkout@v4
@@ -23,11 +35,20 @@ jobs:
           GESDATTA_PASSWORD: ${{ secrets.GESDATTA_PASSWORD }}
         run: python ingestor.py --desde 2026-06-01 --hasta 2026-06-30 --periodo Junio
 
-      - name: Instalar Netlify CLI
-        run: npm install -g netlify-cli
+      - name: Preparar carpeta para publicar
+        run: |
+          mkdir -p public
+          cp index.html public/index.html
+          printf "User-agent: *\nDisallow: /\n" > public/robots.txt
 
-      - name: Subir a Netlify
-        run: netlify deploy --prod --dir . --filter index.html
-        env:
-          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+      - name: Configurar Pages
+        uses: actions/configure-pages@v5
+
+      - name: Subir artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Publicar en GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
