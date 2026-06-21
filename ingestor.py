@@ -405,17 +405,22 @@ def rebuild_mundiales(master, P, args):
     mund["rango"] = fmt_rango(args.desde, args.hasta)
 
     # Índice de rankings por nombre uppercase
+    # Gesdatta escribe "ELEMENTAL" (SRL) y "ELEMMENTAL" (franquicias) según la sucursal —
+    # se normaliza a una sola grafía para no perder unidades de ningún lado.
+    def _norm(s):
+        return s.replace("ELEMMENTAL", "ELEMENTAL")
+
     rk_upper = defaultdict(lambda: {"u": 0, "imp": 0, "branches": {}})
     for br in master.get("rankings", {}).get(P, {}):
         for it in master["rankings"][P][br]["items"]:
-            key = it["nombre"].upper().strip()
+            key = _norm(it["nombre"].upper().strip())
             rk_upper[key]["u"]   += it["u"]
             rk_upper[key]["imp"] += it["imp"]
             rk_upper[key]["branches"][br] = {"u": it["u"], "imp": it["imp"]}
 
     def match_mundial(nombre):
         """Busca solo items con VASO COLECCIONABLE (promo mundiales), por burger + side."""
-        key = nombre.upper().strip()
+        key = _norm(nombre.upper().strip())
         es_aros  = "AROS"  in key
         es_papas = "PAPAS" in key
         STOPWORDS = {"CON","DE","LA","EL","LOS","LAS","Y","A"}
