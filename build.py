@@ -155,7 +155,7 @@ function closeSidebar(){
 const DATA=__MASTER__;const IMG=__IMG__;
 document.getElementById('logoLeno').src=IMG.leno;document.getElementById('gesSide').src=IMG.gesdatta;document.getElementById('gesFoot').src=IMG.gesdatta;
 document.getElementById('hoy').textContent=new Date().toLocaleDateString('es-AR');
-const F=n=>'$'+Math.round(n).toLocaleString('es-AR');
+const F=n=>'$'+n.toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
 const Fm=n=>'$'+(n/1e6).toFixed(1)+'M';
 const pct=(a,b)=>b?((a-b)/b*100):0;
 const SRL=['Aconquija','Barrio Norte','Tafi Viejo'];
