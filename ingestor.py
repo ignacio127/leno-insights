@@ -8,7 +8,9 @@ Reconstruye TODAS las secciones del dashboard en una corrida:
 
 Uso:
     python ingestor.py
+        → corre automático: mes en curso, desde el día 1 hasta hoy.
     python ingestor.py --desde 2026-06-01 --hasta 2026-06-30 --periodo Junio
+        → uso manual, típicamente para cerrar un mes ya finalizado con fecha exacta.
 """
 import json, os, re, sys, argparse, subprocess, urllib.request, urllib.error
 from collections import defaultdict, Counter
@@ -28,7 +30,17 @@ BRANCHES = [
     ("Mafra S.A.S.",     "2", "FLIP",          "Franquicias"),
 ]
 
-DEF_PERIODO, DEF_DESDE, DEF_HASTA = "Junio", "2026-06-01", "2026-06-30"
+MESES_ES = ["", "Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio",
+            "Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
+
+# Defaults autocalculados: "mes en curso, desde el día 1 hasta hoy".
+# Esto evita tener que editar este archivo (ni el workflow) cada mes.
+# Para cerrar un mes ya finalizado con fecha exacta, pasar los args explícitos:
+#   python ingestor.py --desde 2026-06-01 --hasta 2026-06-30 --periodo Junio
+_hoy = date.today()
+DEF_PERIODO = MESES_ES[_hoy.month]
+DEF_DESDE   = _hoy.replace(day=1).isoformat()
+DEF_HASTA   = _hoy.isoformat()
 
 MES_ABBR = {"01":"ene","02":"feb","03":"mar","04":"abr","05":"may","06":"jun",
              "07":"jul","08":"ago","09":"sep","10":"oct","11":"nov","12":"dic"}
