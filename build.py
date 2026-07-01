@@ -169,6 +169,21 @@ const MES_ABBR={Enero:'Ene',Febrero:'Feb',Marzo:'Mar',Abril:'Abr',Mayo:'May',Jun
 function mesesHistoricos(){return MESES_ORDEN.filter(m=>DATA.monthly[m]);}
 function rangoHistoricoChip(){const ms=mesesHistoricos();return ms.length?MES_ABBR[ms[0]]+'–'+MES_ABBR[ms[ms.length-1]]:'';}
 function rangoHistoricoScope(){return rangoHistoricoChip()+' 2026';}
+function rangoSemanalChip(){
+ const wk=DATA.weekly||[];if(!wk.length)return '';
+ // 'semana' viene como 'DD.MM al DD.MM'; usamos el INICIO de la primera semana
+ // y el FIN de la última (no su inicio) para no recortar el mes en curso.
+ const ini=wk[0].semana.split(' al ')[0].split('.');
+ const fin=wk[wk.length-1].semana.split(' al ')[1].split('.');
+ const MA=MES_ABBR[MESES_ORDEN[parseInt(ini[1],10)-1]],MB=MES_ABBR[MESES_ORDEN[parseInt(fin[1],10)-1]];
+ return MA===MB?MA:(MA+'–'+MB);
+}
+function mesParcialLabel(){
+ // Identifica cuál de los períodos disponibles está actualmente en curso (parcial),
+ // en vez de tenerlo escrito a mano — hoy es Julio, el mes que viene deja de serlo.
+ const p=DATA.periods.find(p=>DATA.period_meta[p]&&DATA.period_meta[p].parcial);
+ return p||null;
+}
 function mkChart(id,cfg){if(charts[id])charts[id].destroy();const el=document.getElementById(id);if(el)charts[id]=new Chart(el,cfg);}
 Chart.defaults.color='#71757f';Chart.defaults.font.family='Inter';Chart.defaults.borderColor='#e7e9ee';
 const LINE='#e7e9ee';
@@ -251,9 +266,17 @@ RENDER.resumen=()=>{
    const agg=per=>{const A=DATA.analytics[per];let gr=0,d=0,c=0;scope.forEach(b=>{if(A[b]){gr+=A[b].gross;d+=Math.abs(A[b].descuentos);c+=A[b].comandas;}});const dd=DATA.period_meta[per].dias;return{brutoDia:gr/dd,netoDia:(gr-d)/dd,ticket:gr/Math.max(c,1),descPct:d/gr*100};};
    const cu=agg(PERIOD),pr=agg(prev);
    const row=(lbl,cv,pv,fmt,inv)=>{const dl=(cv/pv-1)*100,up=dl>=0,good=inv?!up:up;return '<tr style="border-top:1px solid var(--line)"><td class="py-2 pr-3">'+lbl+'</td><td class="py-2 px-3 text-right font-semibold">'+fmt(cv)+'</td><td class="py-2 px-3 text-right" style="color:var(--mut)">'+fmt(pv)+'</td><td class="py-2 px-3 text-right"><span class="badge" style="background:'+(good?'#dcfce7':'#fee2e2')+';color:'+(good?'#16a34a':'#e11d48')+'">'+(up?'▲':'▼')+' '+Math.abs(dl).toFixed(1)+'%</span></td></tr>';};
+   // Aviso de baja confiabilidad: si el período actual recién empezó (pocos días
+   // transcurridos y todavía en curso), comparar su promedio/día contra el promedio
+   // de un mes YA CERRADO sobreestima la caída, porque el día de hoy puede seguir
+   // sumando ventas después de esta corrida. No intentamos "corregir" el número con
+   // una proyección — avisamos para que no se lea como una caída real todavía.
+   const diasCur=DATA.period_meta[PERIOD].dias;
+   const pocosDias=DATA.period_meta[PERIOD].parcial && diasCur<=5;
+   const avisoPocosDias=pocosDias?('<div class="text-[12px] mt-3 px-4 py-2.5 rounded-lg flex gap-2" style="background:#fef2f2;border:1px solid #fecaca;color:#991b1b">⚠️ <span><b>'+PERIOD+' lleva solo '+diasCur+' día'+(diasCur===1?'':'s')+' transcurrido'+(diasCur===1?'':'s')+'.</b> Comparar el promedio diario de un mes recién empezado (y todavía en curso) contra '+prev+' —ya cerrado— va a mostrar una caída más grande de la real. Esperá a tener al menos 5–7 días para leer esta tabla con confianza.</span></div>'):'';
    cmp='<div class="card p-5 mt-4"><div class="font-semibold mb-1">📊 Comparación vs mes anterior · '+prev+'</div><div class="text-[12px] mb-3" style="color:var(--mut)">Base comparable: '+scopeLabel+'. Todas las cifras son <b>por día</b> (no por mes) para poder comparar meses parciales con meses completos.</div><div style="overflow-x:auto"><table class="text-sm w-full"><thead><tr class="text-[12px] text-left" style="color:var(--mut)"><th class="py-2 pr-3">Métrica ('+(usaTotal?'Total':'SRL')+') · por día</th><th class="py-2 px-3 text-right">'+PERIOD+'</th><th class="py-2 px-3 text-right">'+prev+'</th><th class="py-2 px-3 text-right">Δ</th></tr></thead><tbody>'+
      row('Facturación bruta / día',cu.brutoDia,pr.brutoDia,Fm)+row('Facturación neta / día',cu.netoDia,pr.netoDia,Fm)+row('Ticket promedio',cu.ticket,pr.ticket,F)+row('Descuentos % s/ bruto',cu.descPct,pr.descPct,v=>v.toFixed(1)+'%',true)+
-     '</tbody></table></div>'+(usaTotal?'':note('Se compara solo SRL porque '+prev+' no tiene datos de Franquicias cargados. El total bruto de arriba sí incluye todas las sucursales del período.'))+'</div>';}
+     '</tbody></table></div>'+avisoPocosDias+(usaTotal?'':note('Se compara solo SRL porque '+prev+' no tiene datos de Franquicias cargados. El total bruto de arriba sí incluye todas las sucursales del período.'))+'</div>';}
  const el=document.getElementById('sec-resumen');
  el.innerHTML='<div class="grid grid-cols-1 md:grid-cols-4 gap-4">'+kpis+'</div>'+rr+strip+cmp+
   '<div class="card p-5 mt-4"><div class="font-semibold mb-3">🔔 Alertas & Insights</div><div class="grid md:grid-cols-2 gap-3 text-[13px]">'+
@@ -262,7 +285,7 @@ RENDER.resumen=()=>{
    insight('#FA0050','Delivery','PedidosYa = <b>'+peya.toFixed(0)+'%</b> del canal. Comisión de plataforma a contrastar contra LENO+.')+
    insight('#f59e0b','Margen','El panel mide facturación, no rentabilidad. Sin costos/comisiones no hay lectura de margen (mejora pendiente).')+
   '</div></div>'+
-  '<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4"><div class="card p-5 lg:col-span-2"><div class="font-semibold mb-1">Evolución semanal · Total cadena (histórico)</div><div class="text-[12px] mb-3" style="color:var(--mut)">Ene–May 2026 · independiente del período seleccionado</div><canvas id="cRes" height="110"></canvas></div>'+
+  '<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4"><div class="card p-5 lg:col-span-2"><div class="font-semibold mb-1">Evolución semanal · Total cadena (histórico)</div><div class="text-[12px] mb-3" style="color:var(--mut)">'+rangoSemanalChip()+' · independiente del período seleccionado</div><canvas id="cRes" height="110"></canvas></div>'+
    '<div class="card p-5"><div class="font-semibold mb-3">Mix por sucursal</div><canvas id="cMix" height="190"></canvas></div></div>'+
   '<div class="card p-5 mt-4"><div class="font-semibold mb-1">Ranking de sucursales · '+pm.label+'</div><div class="text-[12px] mb-4" style="color:var(--mut)">Tocá una sucursal para ver su detalle</div>'+
    ranked.map((r,i)=>'<div class="click flex items-center gap-3 mb-2 p-1.5 rounded-lg" onclick="branchModal(\''+r.b+'\')"><span class="w-7 text-center font-bold">'+(i===0?CROWN:'<span style=\"color:var(--mut)\">'+(i+1)+'</span>')+'</span><span class="w-36 text-sm shrink-0">'+r.b+' '+(SRL.indexOf(r.b)>=0?'<span class=\"badge\" style=\"background:#dbeafe;color:#2563eb\">SRL</span>':'<span class=\"badge\" style=\"background:#fef3c7;color:#b45309\">FR</span>')+'</span><div class="flex-1 h-7 rounded-lg overflow-hidden" style="background:#f0f1f4"><div class="h-full flex items-center justify-end pr-2 text-[11px] font-bold text-white" style="width:'+(r.v/maxb*100)+'%;background:'+PAL[i%PAL.length]+'">'+Fm(r.v)+'</div></div></div>').join('')+'</div>';
@@ -284,7 +307,7 @@ RENDER.semanal=()=>{
  const _b=histBanner;
  const cur=document.getElementById('selBr')?document.getElementById('selBr').value:'Total';
  const allbr=['Aconquija','Barrio Norte','Tafi Viejo','Peron','Independencia','Barrio Sur','FLIP'];
- el.innerHTML=_b+'<div class="card p-5"><div class="flex items-center justify-between flex-wrap gap-2 mb-1"><div class="font-semibold">Ventas semanales por sucursal</div><select id="selBr" onchange="RENDER.semanal()" class="sel"><option value="Total">Total cadena</option><option value="SRL">Solo SRL</option><option value="Franquicias">Solo Franquicias</option>'+allbr.map(b=>'<option value="'+BDKEY[b]+'">'+b+'</option>').join('')+'</select></div><div class="text-[12px] mb-3" style="color:var(--mut)">Histórico Ene–May (VTAS_SEMANALES, cadena completa). Pasá el cursor para ver el total de cada semana.</div><canvas id="cWk" height="90"></canvas></div>'+
+ el.innerHTML=_b+'<div class="card p-5"><div class="flex items-center justify-between flex-wrap gap-2 mb-1"><div class="font-semibold">Ventas semanales por sucursal</div><select id="selBr" onchange="RENDER.semanal()" class="sel"><option value="Total">Total cadena</option><option value="SRL">Solo SRL</option><option value="Franquicias">Solo Franquicias</option>'+allbr.map(b=>'<option value="'+BDKEY[b]+'">'+b+'</option>').join('')+'</select></div><div class="text-[12px] mb-3" style="color:var(--mut)">Histórico '+rangoSemanalChip()+' (cadena completa). Pasá el cursor para ver el total de cada semana.</div><canvas id="cWk" height="90"></canvas></div>'+
   '<div class="card p-5 mt-4 overflow-x-auto"><div class="font-semibold mb-3">Detalle semanal</div><table class="text-sm"><thead><tr class="text-left text-[12px]" style="color:var(--mut)"><th class="py-2 pr-3">Semana</th>'+allbr.map(b=>'<th class="py-2 px-3 text-right">'+b.split(' ')[0]+'</th>').join('')+'<th class="py-2 pl-3 text-right" style="color:var(--red)">Total</th></tr></thead><tbody>'+wk.map(w=>'<tr style="border-top:1px solid var(--line)"><td class="py-2 pr-3 whitespace-nowrap">'+w.semana+'</td>'+allbr.map(b=>'<td class="py-2 px-3 text-right" style="color:var(--mut)">'+Fm(w[BDKEY[b]])+'</td>').join('')+'<td class="py-2 pl-3 text-right font-semibold" style="color:var(--red)">'+Fm(w.Total)+'</td></tr>').join('')+'</tbody></table></div>';
  document.getElementById('selBr').value=cur;
  mkChart('cWk',{type:'line',data:{labels:wk.map(w=>w.semana.split(' al ')[0]),datasets:[{label:cur,data:wk.map(w=>w[cur]),borderColor:'#2563eb',backgroundColor:c=>{const x=c.chart.ctx.createLinearGradient(0,0,0,220);x.addColorStop(0,'rgba(37,99,235,.20)');x.addColorStop(1,'rgba(37,99,235,0)');return x;},fill:true,tension:.4,pointRadius:0,pointHoverRadius:5,borderWidth:2.5}]},options:{interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{callbacks:{title:it=>'Semana '+it[0].label,label:c=>'Total '+cur+': '+F(c.raw)}}},scales:{y:{ticks:{callback:v=>'$'+(v/1e6).toFixed(0)+'M'},grid:{color:LINE}},x:{grid:{display:false}}}}});
@@ -357,7 +380,7 @@ RENDER.ranking=()=>{
    '<select onchange="rkCat=this.value;RENDER.ranking()" class="sel"><option value="ALL">Todas las categorías</option>'+cats.map(c=>'<option value="'+c+'"'+(rkCat===c?' selected':'')+'>'+c+'</option>').join('')+'</select>'+
    '<div class="tg px-3 py-1.5 rounded-lg text-xs border" style="border-color:var(--line);'+(rkCompare?'background:#16a34a;color:#fff':'')+'" onclick="rkCompare=!rkCompare;RENDER.ranking()">↔ vs mes ant.</div>'+
    '<div class="flex rounded-lg overflow-hidden text-xs border ml-auto" style="border-color:var(--line)"><div class="tg px-3 py-1.5" style="'+tgcss(rkSort==='imp')+'" onclick="rkSort=\'imp\';RENDER.ranking()">$ Facturación</div><div class="tg px-3 py-1.5" style="'+tgcss(rkSort==='u')+'" onclick="rkSort=\'u\';RENDER.ranking()">Unidades</div></div></div><div id="rkBody"></div>'+
-   note('SRL: nivel comanda. Franquicias (solo Junio): comanda. Se excluyen modificadores, packaging, comps $0, “PRUEBA” y personal. <b>Consolidado</b> suma promos y junta “X4 Cheeseburger” en “Leno Buckets Cheeseburger X4”.')+'</div>';
+   note('SRL: nivel comanda. Franquicias (desde Junio): nivel comanda. Se excluyen modificadores, packaging, comps $0, “PRUEBA” y personal. <b>Consolidado</b> suma promos y junta “X4 Cheeseburger” en “Leno Buckets Cheeseburger X4”.')+'</div>';
  paintRk();};
 function paintRk(){const arr=rankData();const tot=arr.reduce((s,x)=>s+x.imp,0)||1;const mx=Math.max.apply(null,arr.map(x=>rkSort==='imp'?x.imp:x.u).concat([1]));
  const _pi=DATA.periods.indexOf(PERIOD);const other=_pi>0?DATA.periods[_pi-1]:null;
@@ -603,7 +626,7 @@ RENDER.descuentos=()=>{const brs=selBrs(fDesc);const el=document.getElementById(
    (topc?insight('#f59e0b','Concepto principal','<b>'+topc.c+'</b> ('+topc.fm+') concentra '+(topc.v/tot*100).toFixed(0)+'% del total: '+F(topc.v)+'.'):'')+
    insight('#ef4444','Comps internos',intPct.toFixed(0)+'% no es descuento a cliente, es consumo interno/comps ('+Fm(macro.int)+'). Es control, no marketing.')+
    insight('#10b981','Acción',(tot/gross*100)>5?'Nivel alto: fijá un tope por comanda y auditá el concepto principal.':'Nivel controlado: vigilá que no escale mes a mes.')+'</div></div>'+
-  '<div class="card p-5 mt-4"><div class="font-semibold mb-3">Evolución por mes · comercial vs interno</div><canvas id="cDescEvo" height="110"></canvas>'+note('Comparación entre meses (todas las sucursales del período de cada mes). Junio es parcial. “A clientes”: cupones, convenios, promos, socios, voucher. “Internos”: autorización socios, comps, franquicias.')+'</div>'+
+  '<div class="card p-5 mt-4"><div class="font-semibold mb-3">Evolución por mes · comercial vs interno</div><canvas id="cDescEvo" height="110"></canvas>'+note('Comparación entre meses (todas las sucursales del período de cada mes). '+(mesParcialLabel()?mesParcialLabel()+' es parcial. ':'')+'“A clientes”: cupones, convenios, promos, socios, voucher. “Internos”: autorización socios, comps, franquicias.')+'</div>'+
   note('Derivado de líneas negativas a nivel comanda. En franquicias parte del descuento se carga sobre el producto sin concepto → cae en “Ajuste sin concepto”.');
  function macroOf(period){const mm={cli:0,int:0,otr:0};DATA.period_meta[period].branches.forEach(b=>{const d=(DATA.descdet[period]||{})[b]||{};for(const c in d){mm[DMACRO[DATA.descfam[c]||'Ajuste sin concepto']||'otr']+=d[c];}});return mm;}
  const ev=DATA.periods.map(macroOf);
