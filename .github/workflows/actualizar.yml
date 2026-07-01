@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -36,6 +36,14 @@ jobs:
         run: |
           python ingestor.py --desde 2026-06-01 --hasta 2026-06-30 --periodo Junio
           python ingestor.py --desde 2026-07-01 --hasta $(date +%Y-%m-%d) --periodo Julio
+
+      - name: Guardar master.json actualizado en el repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add master.json
+          git diff --staged --quiet || git commit -m "data: actualizar master.json $(date +%Y-%m-%d)"
+          git push
 
       - name: Preparar carpeta para publicar
         run: |
