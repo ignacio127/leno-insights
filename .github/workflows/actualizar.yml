@@ -29,13 +29,38 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Calcular periodos (mes actual y mes anterior)
+        id: periodos
+        run: |
+          MESES=(Enero Febrero Marzo Abril Mayo Junio Julio Agosto Septiembre Octubre Noviembre Diciembre)
+          HOY=$(date +%Y-%m-%d)
+          ANIO_ACT=$(date +%Y); MES_ACT=$(date +%-m)
+          PERIODO_ACT=${MESES[$((MES_ACT-1))]}
+          DESDE_ACT="${ANIO_ACT}-$(printf '%02d' $MES_ACT)-01"
+          HASTA_ACT="$HOY"
+
+          PRIMER_DIA_ACT="${ANIO_ACT}-$(printf '%02d' $MES_ACT)-01"
+          HASTA_ANT=$(date -d "$PRIMER_DIA_ACT -1 day" +%Y-%m-%d)
+          DESDE_ANT=$(date -d "$HASTA_ANT" +%Y-%m-01)
+          MES_ANT=$(date -d "$HASTA_ANT" +%-m)
+          PERIODO_ANT=${MESES[$((MES_ANT-1))]}
+
+          echo "periodo_act=$PERIODO_ACT" >> "$GITHUB_OUTPUT"
+          echo "desde_act=$DESDE_ACT"     >> "$GITHUB_OUTPUT"
+          echo "hasta_act=$HASTA_ACT"     >> "$GITHUB_OUTPUT"
+          echo "periodo_ant=$PERIODO_ANT" >> "$GITHUB_OUTPUT"
+          echo "desde_ant=$DESDE_ANT"     >> "$GITHUB_OUTPUT"
+          echo "hasta_ant=$HASTA_ANT"     >> "$GITHUB_OUTPUT"
+          echo "Mes anterior: $PERIODO_ANT ($DESDE_ANT -> $HASTA_ANT)"
+          echo "Mes actual:   $PERIODO_ACT ($DESDE_ACT -> $HASTA_ACT)"
+
       - name: Correr ingestor
         env:
           GESDATTA_EMAIL: ${{ secrets.GESDATTA_EMAIL }}
           GESDATTA_PASSWORD: ${{ secrets.GESDATTA_PASSWORD }}
         run: |
-          python ingestor.py --desde 2026-06-01 --hasta 2026-06-30 --periodo Junio
-          python ingestor.py --desde 2026-07-01 --hasta $(date +%Y-%m-%d) --periodo Julio
+          python ingestor.py --desde ${{ steps.periodos.outputs.desde_ant }} --hasta ${{ steps.periodos.outputs.hasta_ant }} --periodo ${{ steps.periodos.outputs.periodo_ant }}
+          python ingestor.py --desde ${{ steps.periodos.outputs.desde_act }} --hasta ${{ steps.periodos.outputs.hasta_act }} --periodo ${{ steps.periodos.outputs.periodo_act }}
 
       - name: Guardar master.json actualizado en el repo
         run: |
