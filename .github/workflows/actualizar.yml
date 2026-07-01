@@ -33,7 +33,7 @@ jobs:
         env:
           GESDATTA_EMAIL: ${{ secrets.GESDATTA_EMAIL }}
           GESDATTA_PASSWORD: ${{ secrets.GESDATTA_PASSWORD }}
-        run: python ingestor.py --desde 2026-06-01 --hasta 2026-06-30 --periodo Junio
+        run: python ingestor.py
 
       - name: Preparar carpeta para publicar
         run: |
