@@ -131,6 +131,7 @@ def transform(rows, prodcat):
     daily = defaultdict(float)  # date object -> gross
     # Descuento diario real (para calcular neto exacto por día, no un ratio promedio del mes)
     daily_desc = defaultdict(float)  # date object -> descuento (negativo)
+    daily_cupon_py = defaultdict(float)  # "DD/MM" -> cupón PedidosYa del día (negativo)
     # S/C drill-down: comandas sin comprobante con sus ítems
     sc_cmds = defaultdict(lambda: {"fecha": "", "turno": "", "canal": "", "importe": 0.0, "items": []})
 
@@ -152,6 +153,10 @@ def transform(rows, prodcat):
                     daily_desc[dd] += v
                 except Exception:
                     pass
+                if a == "CUPON PY":
+                    fecha_py = fecha_raw
+                    if "/" in fecha_py: fecha_py = "/".join(fecha_py.split("/")[:2])  # "01/06"
+                    daily_cupon_py[fecha_py] += v
             continue
         gross += v
         cl = (r.get("tipo_delivery") or "").strip() or "Salón/Mostrador"
@@ -223,7 +228,8 @@ def transform(rows, prodcat):
         for k, v in sc_cmds.items() if k
     ], key=lambda x: x["fecha"])
     return analytics, {"items": items, "gross": round(gross)}, \
-           {k: round(x) for k, x in descdet.items()}, round(gross), py_data, daily, daily_desc, sc_list
+           {k: round(x) for k, x in descdet.items()}, round(gross), py_data, daily, daily_desc, \
+           dict(daily_cupon_py), sc_list
 
 # ===========================================================================
 # REBUILD WEEKLY / MONTHLY (histórico de cadena, fuera del selector de período)
@@ -397,7 +403,7 @@ def audit(branch, A, R):
 # ===========================================================================
 # REBUILD PEYA
 # ===========================================================================
-def rebuild_peya(master, P, py_by_branch, tot_by_branch, args):
+def rebuild_peya(master, P, py_by_branch, tot_by_branch, daily_cupon_py_by_branch, args):
     peya     = master.get("peya", {})
     rango    = fmt_rango(args.desde, args.hasta)
     # Template de promos: buscar en período existente o legacy plano
@@ -411,11 +417,13 @@ def rebuild_peya(master, P, py_by_branch, tot_by_branch, args):
     for br, py in py_by_branch.items():
         br_imp=0; br_u=0; br_cmds=set()
         br_dias = defaultdict(lambda:[0.0,0.0])
+        cupon_dia = daily_cupon_py_by_branch.get(br, {})  # {"DD/MM": cupón del día (negativo)}
         for nombre,(u,imp,cmds) in py["agg"].items():
             br_imp+=imp; br_u+=u; br_cmds.update(cmds)
         for fecha,(imp,u) in py["dias"].items():
-            br_dias[fecha][0]+=imp; br_dias[fecha][1]+=u
-            dias_net[fecha][0]+=imp; dias_net[fecha][1]+=u
+            imp_neto = imp + cupon_dia.get(fecha, 0.0)  # cupón ya es negativo
+            br_dias[fecha][0]+=imp_neto; br_dias[fecha][1]+=u
+            dias_net[fecha][0]+=imp_neto; dias_net[fecha][1]+=u
         cupon = master.get("descdet",{}).get(P,{}).get(br,{}).get("CUPON PY",0)
         cupon_by[br]=round(cupon); cupon_tot+=cupon
         br_ped=len(br_cmds)
@@ -643,7 +651,7 @@ def main():
     P         = args.periodo
 
     print(f"\n=== Ingesta {P}  ({args.desde} → {args.hasta})  ·  {len(BRANCHES)} sucursales ===")
-    A_all={};R_all={};D_all={};tot={};py_all={};daily_all={};daily_desc_all={};sc_all={}
+    A_all={};R_all={};D_all={};tot={};py_all={};daily_all={};daily_desc_all={};daily_cupon_py_all={};sc_all={}
     all_ok = True
     fallback_branches = []  # sucursales que usaron valor previo por SIN DATOS esta corrida
     for cliente, suc, branch, grupo in BRANCHES:
@@ -668,6 +676,7 @@ def main():
                 sc_all[branch]=list(prev_sc) if prev_sc else []
                 daily_all[branch]={}   # no hay datos nuevos que aportar al histórico diario esta corrida
                 daily_desc_all[branch]={}  # idem para el descuento diario real
+                daily_cupon_py_all[branch]={}  # idem para el cupón PY diario real
                 py_all[branch]={"agg":{},"dias":{}}  # ver limitación conocida en rebuild_peya (merge por branch)
                 fallback_branches.append(branch)
             else:
@@ -682,10 +691,12 @@ def main():
                 tot[branch]=0; py_all[branch]={"agg":{},"dias":{}}
                 daily_all[branch]={}; sc_all[branch]=[]
                 daily_desc_all[branch]={}
+                daily_cupon_py_all[branch]={}
             continue
-        A,R,D,g,py,daily,daily_desc,sc = transform(rows, prodcat)
+        A,R,D,g,py,daily,daily_desc,daily_cupon_py,sc = transform(rows, prodcat)
         A_all[branch]=A; R_all[branch]=R; D_all[branch]=D; tot[branch]=g; py_all[branch]=py
         daily_all[branch]=daily; daily_desc_all[branch]=daily_desc; sc_all[branch]=sc
+        daily_cupon_py_all[branch]=daily_cupon_py
         all_ok &= audit(branch,A,R)
 
     if not any(v["gross"] > 0 for v in A_all.values()):
@@ -730,7 +741,7 @@ def main():
         master.setdefault("periods",[]).append(P)
 
     # --- secciones de promos ---
-    rebuild_peya(master, P, py_all, tot, args)
+    rebuild_peya(master, P, py_all, tot, daily_cupon_py_all, args)
     rebuild_especial2026(master, P, args)
     rebuild_mundiales(master, P, args)
     rebuild_weekly_monthly(master, daily_all, daily_desc_all, args)
