@@ -129,8 +129,8 @@ def transform(rows, prodcat):
     py_dias = defaultdict(lambda: [0.0, 0.0])          # fecha  -> [imp, u]
     # Diario por fecha (para weekly/monthly) — solo bruto, mismo criterio que branch_tot
     daily = defaultdict(float)  # date object -> gross
-    # Descuentos diarios por fecha (líneas negativas) — para netos reales en ventas_dia
-    daily_desc = defaultdict(float)  # date object -> abs(descuentos)
+    # Descuento diario real (para calcular neto exacto por día, no un ratio promedio del mes)
+    daily_desc = defaultdict(float)  # date object -> descuento (negativo)
     # S/C drill-down: comandas sin comprobante con sus ítems
     sc_cmds = defaultdict(lambda: {"fecha": "", "turno": "", "canal": "", "importe": 0.0, "items": []})
 
@@ -139,17 +139,17 @@ def transform(rows, prodcat):
         if not a or "PRUEBA" in a.upper(): continue
         v = num(r.get("total")); c = num(r.get("cantidad"))
         if v == 0: continue
+        fecha_raw = (r.get("fecha") or "").strip()
         if v < 0:
             ing_d = (r.get("ingreso") or "").strip()
             tipo_d = ing_d.split()[0] if ing_d else "S/C"
             comp_desc[tipo_d] += v  # negativo
             desc += v; descdet[a] += -v
-            # bucket diario de descuentos (mismo parseo de fecha que el bruto)
-            fecha_raw = (r.get("fecha") or "").strip()
+            # bucket diario del descuento, con el mismo criterio de fecha que "daily"
             if fecha_raw:
                 try:
-                    d = datetime.strptime(fecha_raw.split(" ")[0], "%d/%m/%Y").date()
-                    daily_desc[d] += -v
+                    dd = datetime.strptime(fecha_raw.split(" ")[0], "%d/%m/%Y").date()
+                    daily_desc[dd] += v
                 except Exception:
                     pass
             continue
@@ -176,7 +176,6 @@ def transform(rows, prodcat):
         if ENVIO.search(a): envu += c; envi += v
         if SERVM.search(a): smu += c; smi += v
         # fecha -> bucket diario
-        fecha_raw = (r.get("fecha") or "").strip()
         if fecha_raw:
             try:
                 d = datetime.strptime(fecha_raw.split(" ")[0], "%d/%m/%Y").date()
@@ -243,13 +242,15 @@ def _semana_label(d):
     domingo = lunes + timedelta(days=6)
     return f"{lunes.day:02d}.{lunes.month:02d} al {domingo.day:02d}.{domingo.month:02d}", lunes
 
-def rebuild_weekly_monthly(master, daily_by_branch, args, daily_desc_by_branch=None):
-    """daily_by_branch: {branch: {date: gross}}. Recalcula semanas y meses
-    que caen dentro del rango consultado; preserva todo lo anterior.
+def rebuild_weekly_monthly(master, daily_by_branch, daily_desc_by_branch, args):
+    """daily_by_branch: {branch: {date: gross}}. daily_desc_by_branch: {branch: {date: descuento (neg.)}}.
+    Recalcula semanas y meses que caen dentro del rango consultado; preserva todo lo anterior.
     Si una sucursal no respondió en esta corrida (SIN DATOS), su valor
     previo en esa semana/mes se mantiene en vez de pisarse con 0."""
     weeks  = defaultdict(lambda: defaultdict(float))   # semana_label -> {branch_key: imp}
+    weeks_desc = defaultdict(lambda: defaultdict(float))   # semana_label -> {branch_key: desc}
     months = defaultdict(lambda: defaultdict(float))   # mes_nombre   -> {branch_key: imp}
+    months_desc = defaultdict(lambda: defaultdict(float))   # mes_nombre -> {branch_key: desc}
     month_dias = defaultdict(set)                       # mes_nombre -> {fechas con datos}
 
     for branch, dailymap in daily_by_branch.items():
@@ -261,19 +262,42 @@ def rebuild_weekly_monthly(master, daily_by_branch, args, daily_desc_by_branch=N
             months[mn][key] += imp
             month_dias[mn].add(d)
 
+    for branch, descmap in daily_desc_by_branch.items():
+        key = WK_KEY.get(branch, branch)
+        for d, v in descmap.items():
+            wl, _ = _semana_label(d)
+            weeks_desc[wl][key] += v
+            mn = MESES_ES[d.month]
+            months_desc[mn][key] += v
+
     SRL_KEYS = ("Aconquija", "Barrio Norte", "Tafi Viejo")
     FR_KEYS  = ("Independencia", "Barrio Sur", "Peron", "Flip")
 
-    def _merge(existing, touched):
+    def _merge(existing, touched, touched_desc=None):
         """Parte del registro previo (si hay), pisa solo las sucursales
-        tocadas en esta corrida, recalcula SRL/Franquicias/Total."""
+        tocadas en esta corrida, recalcula SRL/Franquicias/Total (bruto).
+        Si además llega el descuento real de las sucursales tocadas, lo
+        guarda como '{sucursal}_desc' y recalcula SRL_desc/Franquicias_desc/
+        Total_desc — pero solo cuando TODAS las sucursales del grupo tienen
+        ese dato (para no mezclar semanas/meses viejos, sin descuento real,
+        con los nuevos)."""
+        keys_ok = set(SRL_KEYS) | set(FR_KEYS)
         out = {k: v for k, v in (existing or {}).items()
-               if k in SRL_KEYS or k in FR_KEYS}
+               if k in keys_ok or (k.endswith("_desc") and k[:-5] in keys_ok)}
         for k, v in touched.items():
             out[k] = round(v)
+        if touched_desc:
+            for k, v in touched_desc.items():
+                out[k + "_desc"] = round(v)
         srl = sum(out.get(k, 0) for k in SRL_KEYS)
         fr  = sum(out.get(k, 0) for k in FR_KEYS)
         out["SRL"] = round(srl); out["Franquicias"] = round(fr); out["Total"] = round(srl + fr)
+        if all((k + "_desc") in out for k in SRL_KEYS):
+            out["SRL_desc"] = sum(out.get(k + "_desc", 0) for k in SRL_KEYS)
+        if all((k + "_desc") in out for k in FR_KEYS):
+            out["Franquicias_desc"] = sum(out.get(k + "_desc", 0) for k in FR_KEYS)
+        if all((k + "_desc") in out for k in list(SRL_KEYS) + list(FR_KEYS)):
+            out["Total_desc"] = out.get("SRL_desc", 0) + out.get("Franquicias_desc", 0)
         return out
 
     # --- merge semanal: pisa solo sucursales tocadas, preserva el resto ---
@@ -282,7 +306,7 @@ def rebuild_weekly_monthly(master, daily_by_branch, args, daily_desc_by_branch=N
     for wl, d in weeks.items():
         idx = existentes.get(wl)
         prev = weekly_list[idx] if idx is not None else {}
-        entry = {"semana": wl, **_merge(prev, d)}
+        entry = {"semana": wl, **_merge(prev, d, weeks_desc.get(wl, {}))}
         if idx is not None:
             weekly_list[idx] = entry
         else:
@@ -301,7 +325,7 @@ def rebuild_weekly_monthly(master, daily_by_branch, args, daily_desc_by_branch=N
     mes_num = {v: k for k, v in MESES_ES.items()}
     for mn, d in months.items():
         prev = monthly.get(mn, {})
-        entry = _merge(prev, d)
+        entry = _merge(prev, d, months_desc.get(mn, {}))
         dias_con_datos = len(month_dias[mn])
         ndias_mes = calendar.monthrange(anio, mes_num[mn])[1]
         entry["_dias"] = dias_con_datos
@@ -320,12 +344,12 @@ def rebuild_weekly_monthly(master, daily_by_branch, args, daily_desc_by_branch=N
             fecha = f"{d.day:02d}/{d.month:02d}"
             daily_by_fecha[fecha][branch] += imp
 
-    # Descuentos diarios reales por fecha (paralelo al bruto)
-    desc_by_fecha = defaultdict(lambda: defaultdict(float))
-    for branch, descmap in (daily_desc_by_branch or {}).items():
-        for d, imp in descmap.items():
+    # Descuento real por fecha/sucursal (para neto exacto por día, ver auditoría 02/07/2026)
+    daily_desc_by_fecha = defaultdict(lambda: defaultdict(float))
+    for branch, descmap in daily_desc_by_branch.items():
+        for d, v in descmap.items():
             fecha = f"{d.day:02d}/{d.month:02d}"
-            desc_by_fecha[fecha][branch] += imp
+            daily_desc_by_fecha[fecha][branch] += v
 
     # Leer daily_data previo del período para mergear (preservar fechas ya guardadas)
     prev_daily = {row["fecha"]: dict(row)
@@ -334,27 +358,23 @@ def rebuild_weekly_monthly(master, daily_by_branch, args, daily_desc_by_branch=N
         entry = prev_daily.get(fecha, {"fecha": fecha})
         for b, v in bmap.items():
             entry[b] = round(v)
-            # Si la sucursal reportó bruto esta corrida, su descuento diario es
-            # conocido (0 si no hubo líneas negativas ese día). Se escribe SIEMPRE
-            # para que el dashboard use neto real y no el ratio proporcional.
-            entry[b + "_desc"] = round(desc_by_fecha.get(fecha, {}).get(b, 0.0))
-        # Recalcular SRL / Franquicias / Total
+        # Descuentos del día para las sucursales tocadas esta corrida (negativo, o 0 si no hubo)
+        dmap = daily_desc_by_fecha.get(fecha, {})
+        for b in bmap:
+            entry[b + "_desc"] = round(dmap.get(b, 0.0))
+        # Recalcular SRL / Franquicias / Total (bruto)
         entry["SRL"]         = sum(entry.get(b, 0) for b in SRL_BR)
         entry["Franquicias"] = sum(entry.get(b, 0) for b in FRANQ_BR)
         entry["Total"]       = entry["SRL"] + entry["Franquicias"]
-        # Agregados _desc por grupo: SOLO si todas las sucursales presentes en la
-        # fecha tienen _desc (fechas históricas sin backfill quedan sin agregado
-        # y el dashboard cae al ratio proporcional para ese scope).
-        for gname, brs in (("SRL", SRL_BR), ("Franquicias", FRANQ_BR)):
-            pres = [b for b in brs if b in entry]
-            if all((b + "_desc") in entry for b in pres):
-                entry[gname + "_desc"] = sum(entry.get(b + "_desc", 0) for b in pres)
-            else:
-                entry.pop(gname + "_desc", None)
-        if "SRL_desc" in entry and "Franquicias_desc" in entry:
-            entry["Total_desc"] = entry["SRL_desc"] + entry["Franquicias_desc"]
-        else:
-            entry.pop("Total_desc", None)
+        # Recalcular SRL_desc / Franquicias_desc / Total_desc — solo si TODAS las
+        # sucursales del grupo tienen el campo _desc (si falta alguna, se omite el
+        # agregado para no mezclar neto exacto con bruto de un histórico viejo)
+        if all((b + "_desc") in entry for b in SRL_BR):
+            entry["SRL_desc"] = sum(entry.get(b + "_desc", 0) for b in SRL_BR)
+        if all((b + "_desc") in entry for b in FRANQ_BR):
+            entry["Franquicias_desc"] = sum(entry.get(b + "_desc", 0) for b in FRANQ_BR)
+        if all((b + "_desc") in entry for b in SRL_BR + FRANQ_BR):
+            entry["Total_desc"] = entry.get("SRL_desc", 0) + entry.get("Franquicias_desc", 0)
         prev_daily[fecha]    = entry
 
     # Ordenar cronológicamente (dd/mm → sort por mes luego día)
@@ -646,7 +666,8 @@ def main():
                 D_all[branch]=dict(prev_D) if prev_D else {}
                 tot[branch]=prev_tot
                 sc_all[branch]=list(prev_sc) if prev_sc else []
-                daily_all[branch]={}; daily_desc_all[branch]={}   # no hay datos nuevos que aportar al histórico diario esta corrida
+                daily_all[branch]={}   # no hay datos nuevos que aportar al histórico diario esta corrida
+                daily_desc_all[branch]={}  # idem para el descuento diario real
                 py_all[branch]={"agg":{},"dias":{}}  # ver limitación conocida en rebuild_peya (merge por branch)
                 fallback_branches.append(branch)
             else:
@@ -659,10 +680,12 @@ def main():
                 R_zero = {"items": [], "gross": 0}
                 A_all[branch]=A_zero; R_all[branch]=R_zero; D_all[branch]={}
                 tot[branch]=0; py_all[branch]={"agg":{},"dias":{}}
-                daily_all[branch]={}; daily_desc_all[branch]={}; sc_all[branch]=[]
+                daily_all[branch]={}; sc_all[branch]=[]
+                daily_desc_all[branch]={}
             continue
-        A,R,D,g,py,daily,dailyd,sc = transform(rows, prodcat)
-        A_all[branch]=A; R_all[branch]=R; D_all[branch]=D; tot[branch]=g; py_all[branch]=py; daily_all[branch]=daily; daily_desc_all[branch]=dailyd; sc_all[branch]=sc
+        A,R,D,g,py,daily,daily_desc,sc = transform(rows, prodcat)
+        A_all[branch]=A; R_all[branch]=R; D_all[branch]=D; tot[branch]=g; py_all[branch]=py
+        daily_all[branch]=daily; daily_desc_all[branch]=daily_desc; sc_all[branch]=sc
         all_ok &= audit(branch,A,R)
 
     if not any(v["gross"] > 0 for v in A_all.values()):
@@ -710,7 +733,7 @@ def main():
     rebuild_peya(master, P, py_all, tot, args)
     rebuild_especial2026(master, P, args)
     rebuild_mundiales(master, P, args)
-    rebuild_weekly_monthly(master, daily_all, args, daily_desc_all)
+    rebuild_weekly_monthly(master, daily_all, daily_desc_all, args)
 
     # --- guardar ---
     import shutil
