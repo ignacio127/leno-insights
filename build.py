@@ -118,6 +118,7 @@ table{border-collapse:collapse;width:100%}
      <div class="w-14 h-14 rounded-xl bg-white border flex items-center justify-center overflow-hidden shrink-0" style="border-color:var(--line);box-shadow:var(--sh1)"><img id="logoLeno" class="w-12 h-12 object-contain"/></div>
      <div class="min-w-0"><div class="font-extrabold tracking-tight leading-none text-lg">LENO Insights</div><div class="text-[11px] mt-1" style="color:var(--mut)">Control de Gestión</div></div></div>
   <nav class="py-3 text-sm" id="nav"></nav>
+  <div id="lastUpdateBox" class="px-4 pb-1 pt-2 mt-1 border-t" style="border-color:var(--line)"></div>
   <div class="px-4 pb-4 pt-3 mt-1 border-t" style="border-color:var(--line)">
      <div class="text-[10px] font-semibold mb-2.5" style="color:var(--mut);text-transform:uppercase;letter-spacing:.09em">Fuente de datos</div>
      <div class="rounded-xl flex items-center justify-center" style="background:#fff;border:1px solid var(--line);box-shadow:0 1px 3px rgba(16,24,40,.06);padding:16px 12px">
@@ -165,11 +166,52 @@ document.getElementById('hoy').textContent=new Date().toLocaleDateString('es-AR'
     brs.map(b=>b+' (hace '+alertas[b].hours_stale+'h)').join(' · ');
   document.body.prepend(div);
 })();
+
 const F=n=>'$'+Math.round(n).toLocaleString('es-AR');
 const Fm=n=>'$'+(n/1e6).toFixed(1)+'M';
 const pct=(a,b)=>b?((a-b)/b*100):0;
 const SRL=['Aconquija','Barrio Norte','Tafi Viejo'];
 const FR_DISPLAY=['Independencia','Barrio Sur','Peron','FLIP'];
+(function(){
+  const box=document.getElementById('lastUpdateBox');
+  const times=DATA.branch_last_ok||{};
+  const SHORT={'Barrio Norte':'B. Norte','Barrio Sur':'B. Sur'};
+  const grupos=[['SRL',SRL],['Franquicias',FR_DISPLAY]];
+  const entries=[];
+  grupos.forEach(([_,arr])=>arr.forEach(b=>{if(times[b])entries.push({b,t:new Date(times[b])});}));
+  if(!entries.length){box.innerHTML='';return;}
+  const now=new Date();
+  const colorFor=d=>{const h=(now-d)/3600000;return h<=6?'var(--ok)':(h<=15?'var(--warn)':'var(--bad)');};
+  const pad2=n=>String(n).padStart(2,'0');
+  const dtf=new Intl.DateTimeFormat('es-AR',{timeZone:'America/Argentina/Tucuman',day:'numeric',month:'numeric',hour:'numeric',minute:'numeric',hourCycle:'h23'});
+  const parts=d=>{const p={};dtf.formatToParts(d).forEach(x=>p[x.type]=x.value);return p;};
+  const fmtFull=d=>{const p=parts(d);return pad2(p.day)+'/'+pad2(p.month)+' '+pad2(p.hour)+':'+pad2(p.minute)+' hs';};
+  const fmtTime=d=>{const p=parts(d);return pad2(p.hour)+':'+pad2(p.minute);};
+  const oldest=entries.reduce((a,b)=>a.t<b.t?a:b);
+  const topColor=colorFor(oldest.t);
+  const subt=topColor==='var(--ok)'?'Todas las sucursales al día':oldest.b+' está atrasada';
+  let rowsHtml='';
+  grupos.forEach(([label,arr])=>{
+    const inGroup=arr.filter(b=>times[b]);
+    if(!inGroup.length)return;
+    rowsHtml+='<div class="text-[9px] font-bold" style="color:var(--mut);text-transform:uppercase;letter-spacing:.05em;margin:'+(rowsHtml?'5px 0 3px':'0 0 3px')+(rowsHtml?';padding-top:5px;border-top:1px solid var(--line)':'')+'">'+label+'</div>';
+    inGroup.forEach(b=>{
+      const t=new Date(times[b]);
+      rowsHtml+='<div class="flex justify-between" style="padding:1.5px 0;font-size:10.5px">'+
+        '<span style="color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:90px">'+(SHORT[b]||b)+'</span>'+
+        '<span style="color:'+colorFor(t)+';flex-shrink:0">'+fmtTime(t)+'</span></div>';
+    });
+  });
+  box.innerHTML='<div class="text-[9.5px] font-bold" style="color:var(--mut);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Última actualización</div>'+
+    '<div style="border-radius:12px;padding:10px 10px 8px;background:#fff;border:1px solid var(--line);box-shadow:0 1px 3px rgba(16,24,40,.06)">'+
+      '<div class="flex items-center gap-1.5" style="margin-bottom:2px">'+
+        '<span style="width:7px;height:7px;border-radius:50%;background:'+topColor+';flex-shrink:0"></span>'+
+        '<span style="font-size:12.5px;font-weight:700;color:var(--txt)">'+fmtFull(oldest.t)+'</span>'+
+      '</div>'+
+      '<div class="text-[9.5px]" style="color:var(--mut);margin-bottom:8px;padding-left:13px">'+subt+'</div>'+
+      rowsHtml+
+    '</div>';
+})();
 const BDKEY={'Aconquija':'Aconquija','Barrio Norte':'Barrio Norte','Tafi Viejo':'Tafi Viejo','Peron':'Peron','Independencia':'Independencia','Barrio Sur':'Barrio Sur','FLIP':'Flip'};
 const REV_BDKEY={'Aconquija':'Aconquija','Barrio Norte':'Barrio Norte','Tafi Viejo':'Tafi Viejo','Peron':'Peron','Independencia':'Independencia','Barrio Sur':'Barrio Sur','Flip':'FLIP'};
 const PAL=['#E2001A','#2563eb','#f59e0b','#10b981','#8b5cf6','#ec4899','#0ea5e9','#f97316','#6366f1','#84cc16','#14b8a6'];
