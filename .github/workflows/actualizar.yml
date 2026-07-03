@@ -63,12 +63,36 @@ jobs:
           python ingestor.py --desde ${{ steps.periodos.outputs.desde_act }} --hasta ${{ steps.periodos.outputs.hasta_act }} --periodo ${{ steps.periodos.outputs.periodo_act }}
 
       - name: Guardar master.json actualizado en el repo
+        continue-on-error: true
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add master.json
-          git diff --staged --quiet || git commit -m "data: actualizar master.json $(date +%Y-%m-%d)"
-          git push
+          if git diff --staged --quiet; then
+            echo "Sin cambios en master.json, nada para commitear."
+            exit 0
+          fi
+          git commit -m "data: actualizar master.json $(date +%Y-%m-%d)"
+
+          intentos=0; maximo=3
+          while [ $intentos -lt $maximo ]; do
+            intentos=$((intentos+1))
+            if git push; then
+              echo "Push OK (intento $intentos/$maximo)."
+              exit 0
+            fi
+            echo "Push rechazado (intento $intentos/$maximo) — el remoto tiene commits que no teníamos al arrancar (por ej. alguien subió código mientras corría el workflow). Reintentando con rebase..."
+            git fetch origin main
+            if ! git rebase origin/main; then
+              echo "ERROR: conflicto real de contenido al rebasear (no es solo una carrera de commits) — no reintento más. Revisar a mano."
+              git rebase --abort
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "ERROR: no se pudo pushear master.json después de $maximo intentos."
+          echo "El dashboard SÍ se va a publicar con los datos de esta corrida (siguen en el runner) — lo que queda pendiente es el commit de master.json al repo, que se sincroniza solo en la próxima corrida que logre pushear."
+          exit 1
 
       - name: Preparar carpeta para publicar
         run: |
