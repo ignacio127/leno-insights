@@ -187,20 +187,20 @@ const FR_DISPLAY=['Independencia','Barrio Sur','Peron','FLIP'];
   const fmtTime=d=>{const p=parts(d);return pad2(p.hour)+':'+pad2(p.minute);};
   const oldest=entries.reduce((a,b)=>a.t<b.t?a:b);
   const topColor=colorFor(oldest.t);
-  const subt=topColor==='var(--ok)'?'Todas las sucursales al día':oldest.b+' está atrasada';
+  const subt=topColor==='var(--ok)'?'':oldest.b+' está atrasada';
   let rowsHtml='';
   entries.forEach(({b,t})=>{
-    rowsHtml+='<div class="flex justify-between" style="padding:1.5px 0;font-size:9px">'+
+    rowsHtml+='<div style="display:flex;justify-content:space-between;padding:1.5px 0;font-size:8px">'+
       '<span style="color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100px">'+b+'</span>'+
       '<span style="color:'+colorFor(t)+';flex-shrink:0">'+fmtTime(t)+'</span></div>';
   });
-  box.innerHTML='<div class="text-[8px] font-bold" style="color:var(--mut);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px">Última actualización</div>'+
+  box.innerHTML='<div style="font-size:7px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px">Última actualización</div>'+
     '<div style="border-radius:12px;padding:8px 9px 7px;background:#fff;border:1px solid var(--line);box-shadow:0 1px 3px rgba(16,24,40,.06)">'+
-      '<div class="flex items-center gap-1.5" style="margin-bottom:2px">'+
-        '<span style="width:6px;height:6px;border-radius:50%;background:'+topColor+';flex-shrink:0"></span>'+
-        '<span style="font-size:10.5px;font-weight:700;color:var(--txt)">'+fmtFull(oldest.t)+'</span>'+
+      '<div style="display:flex;align-items:center;margin-bottom:2px">'+
+        '<span style="width:6px;height:6px;border-radius:50%;background:'+topColor+';flex-shrink:0;margin-right:10px"></span>'+
+        '<span style="font-size:9px;font-weight:700;color:var(--txt)">'+fmtFull(oldest.t)+'</span>'+
       '</div>'+
-      '<div class="text-[8px]" style="color:var(--mut);margin-bottom:6px;padding-left:10.5px">'+subt+'</div>'+
+      (subt?'<div style="font-size:7px;color:var(--mut);margin-bottom:6px;padding-left:16px">'+subt+'</div>':'')+
       rowsHtml+
     '</div>';
 })();
