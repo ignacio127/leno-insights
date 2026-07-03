@@ -204,10 +204,6 @@ const FR_DISPLAY=['Independencia','Barrio Sur','Peron','FLIP'];
       rowsHtml+
     '</div>';
 })();
-      '<div class="text-[9.5px]" style="color:var(--mut);margin-bottom:8px;padding-left:13px">'+subt+'</div>'+
-      rowsHtml+
-    '</div>';
-})();
 const BDKEY={'Aconquija':'Aconquija','Barrio Norte':'Barrio Norte','Tafi Viejo':'Tafi Viejo','Peron':'Peron','Independencia':'Independencia','Barrio Sur':'Barrio Sur','FLIP':'Flip'};
 const REV_BDKEY={'Aconquija':'Aconquija','Barrio Norte':'Barrio Norte','Tafi Viejo':'Tafi Viejo','Peron':'Peron','Independencia':'Independencia','Barrio Sur':'Barrio Sur','Flip':'FLIP'};
 const PAL=['#E2001A','#2563eb','#f59e0b','#10b981','#8b5cf6','#ec4899','#0ea5e9','#f97316','#6366f1','#84cc16','#14b8a6'];
