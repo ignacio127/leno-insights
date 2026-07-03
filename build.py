@@ -683,13 +683,29 @@ RENDER.fiscal=()=>{const brs=selBrs(fFisc);const c=mergeDict(brs,'comprobante');
  const descAsig=Object.values(cd).reduce((s,v)=>s+v,0); // negativo
  const descSinAsig=descFilt-descAsig; // lo que no tiene comprobante asignado (negativo)
  const tot=grossFilt||1;const el=document.getElementById('sec-fiscal');
+ const UMBRAL_FAB_ALTO=75;
+ const alertBranches=pbranches().map(b=>{
+  const a=DATA.analytics[PERIOD][b];
+  if(!a||!a.gross) return null;
+  const fab=(a.comprobante&&a.comprobante.FAB)||0;
+  return {suc:b,pct:fab/a.gross*100};
+ }).filter(x=>x&&x.pct>=UMBRAL_FAB_ALTO).sort((a,b)=>b.pct-a.pct);
+ const alertaHtml=alertBranches.length?
+  '<div class="card p-4 mb-4" style="background:#fef3c7;border:1px solid #f59e0b">'+
+  '<div class="flex items-center gap-2 mb-1"><span style="color:#b45309">⚠</span>'+
+  '<span class="font-semibold" style="color:#92400e">'+alertBranches.length+' sucursal'+(alertBranches.length>1?'es':'')+' supera'+(alertBranches.length>1?'n':'')+' '+UMBRAL_FAB_ALTO+'% de FAB</span></div>'+
+  '<div class="text-[12px]" style="color:var(--mut)">'+alertBranches.map(x=>x.suc+' ('+x.pct.toFixed(1)+'%)').join(' · ')+'</div>'+
+  '</div>':'';
  const filaComp=(x,i)=>{
   const dv=cd[x.raw]||0; // negativo
   const neto=x.v+dv;
+  const pct=x.v/tot*100;
+  const fp=pct<1?pct.toFixed(2):pct.toFixed(1);
+  const esAlerta=fFisc!=='ALL'&&x.raw==='FAB'&&pct>=UMBRAL_FAB_ALTO;
   return '<div class="py-3" style="border-bottom:1px solid var(--line)">'+
    '<div class="flex justify-between items-center mb-1">'+
    '<span class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full" style="background:'+PAL[i%PAL.length]+'"></span>'+x.k+'</span>'+
-   '<span class="font-semibold">'+F(x.v)+'</span></div>'+
+   '<span class="flex items-baseline gap-1"><span class="font-semibold">'+F(x.v)+'</span><span class="text-[11px]" style="'+(esAlerta?'color:#b45309;background:#fef3c7;padding:1px 6px;border-radius:4px':'color:var(--mut)')+'">'+fp+'%</span></span></div>'+
    (dv<0?'<div class="flex justify-between text-[12px] pl-5"><span style="color:#e11d48">Descuentos</span><span style="color:#e11d48">− '+F(Math.abs(dv))+'</span></div>':'')+
    '<div class="flex justify-between text-[12px] pl-5"><span class="font-semibold">Neto</span><span class="font-bold" style="color:#16a34a">'+F(neto)+'</span></div>'+
    '</div>';
@@ -699,7 +715,7 @@ RENDER.fiscal=()=>{const brs=selBrs(fFisc);const c=mergeDict(brs,'comprobante');
   (descSinAsig<-1?'<div class="flex justify-between items-center py-1.5 text-[12px]"><span style="color:#e11d48">Desc. sin comprobante</span><span style="color:#e11d48">− '+F(Math.abs(descSinAsig))+'</span></div>':'')+
   '<div class="flex justify-between items-center py-1.5"><span style="color:#e11d48">Descuentos</span><span class="font-semibold" style="color:#e11d48">− '+F(Math.abs(descFilt))+'</span></div>'+
   '<div class="flex justify-between items-center py-1.5"><span class="font-semibold">Neto</span><span class="font-bold text-lg" style="color:#16a34a">'+F(netoFilt)+'</span></div></div>';
- el.innerHTML=filterBar('fFisc','fiscal',fFisc)+'<div class="grid grid-cols-1 lg:grid-cols-2 gap-4"><div class="card p-5"><div class="font-semibold mb-3">Por tipo de comprobante</div><canvas id="cFisc" height="170"></canvas></div><div class="card p-5"><div class="font-semibold mb-3">Detalle · valores brutos</div>'+arr.map(filaComp).join('')+resumen+'</div></div>';
+ el.innerHTML=alertaHtml+filterBar('fFisc','fiscal',fFisc)+'<div class="grid grid-cols-1 lg:grid-cols-2 gap-4"><div class="card p-5"><div class="font-semibold mb-3">Por tipo de comprobante</div><canvas id="cFisc" height="170"></canvas></div><div class="card p-5"><div class="font-semibold mb-3">Detalle · valores brutos</div>'+arr.map(filaComp).join('')+resumen+'</div></div>';
  mkChart('cFisc',{type:'bar',data:{labels:arr.map(x=>x.k),datasets:[{data:arr.map(x=>x.v),backgroundColor:arr.map((x,i)=>PAL[i%PAL.length]),borderRadius:8}]},options:{indexAxis:'y',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>F(c.raw)}}},scales:{x:{ticks:{callback:v=>'$'+(v/1e6).toFixed(1)+'M'},grid:{color:LINE}},y:{grid:{display:false}}}}});
  // Drill-down S/C — se inserta en div separado para no destruir el canvas del gráfico
  const scData=brs.flatMap(b=>{const cmd=((DATA.sc_comandas||{})[PERIOD]||{})[b]||[];return cmd.map(x=>({...x,suc:b}));}).sort((a,b)=>b.fecha.localeCompare(a.fecha));
