@@ -175,10 +175,8 @@ const FR_DISPLAY=['Independencia','Barrio Sur','Peron','FLIP'];
 (function(){
   const box=document.getElementById('lastUpdateBox');
   const times=DATA.branch_last_ok||{};
-  const SHORT={'Barrio Norte':'B. Norte','Barrio Sur':'B. Sur'};
-  const grupos=[['SRL',SRL],['Franquicias',FR_DISPLAY]];
-  const entries=[];
-  grupos.forEach(([_,arr])=>arr.forEach(b=>{if(times[b])entries.push({b,t:new Date(times[b])});}));
+  const TODAS=SRL.concat(FR_DISPLAY);
+  const entries=TODAS.filter(b=>times[b]).map(b=>({b,t:new Date(times[b])}));
   if(!entries.length){box.innerHTML='';return;}
   const now=new Date();
   const colorFor=d=>{const h=(now-d)/3600000;return h<=6?'var(--ok)':(h<=15?'var(--warn)':'var(--bad)');};
@@ -191,23 +189,21 @@ const FR_DISPLAY=['Independencia','Barrio Sur','Peron','FLIP'];
   const topColor=colorFor(oldest.t);
   const subt=topColor==='var(--ok)'?'Todas las sucursales al día':oldest.b+' está atrasada';
   let rowsHtml='';
-  grupos.forEach(([label,arr])=>{
-    const inGroup=arr.filter(b=>times[b]);
-    if(!inGroup.length)return;
-    rowsHtml+='<div class="text-[9px] font-bold" style="color:var(--mut);text-transform:uppercase;letter-spacing:.05em;margin:'+(rowsHtml?'5px 0 3px':'0 0 3px')+(rowsHtml?';padding-top:5px;border-top:1px solid var(--line)':'')+'">'+label+'</div>';
-    inGroup.forEach(b=>{
-      const t=new Date(times[b]);
-      rowsHtml+='<div class="flex justify-between" style="padding:1.5px 0;font-size:10.5px">'+
-        '<span style="color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:90px">'+(SHORT[b]||b)+'</span>'+
-        '<span style="color:'+colorFor(t)+';flex-shrink:0">'+fmtTime(t)+'</span></div>';
-    });
+  entries.forEach(({b,t})=>{
+    rowsHtml+='<div class="flex justify-between" style="padding:1.5px 0;font-size:9px">'+
+      '<span style="color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100px">'+b+'</span>'+
+      '<span style="color:'+colorFor(t)+';flex-shrink:0">'+fmtTime(t)+'</span></div>';
   });
-  box.innerHTML='<div class="text-[9.5px] font-bold" style="color:var(--mut);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Última actualización</div>'+
-    '<div style="border-radius:12px;padding:10px 10px 8px;background:#fff;border:1px solid var(--line);box-shadow:0 1px 3px rgba(16,24,40,.06)">'+
+  box.innerHTML='<div class="text-[8px] font-bold" style="color:var(--mut);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px">Última actualización</div>'+
+    '<div style="border-radius:12px;padding:8px 9px 7px;background:#fff;border:1px solid var(--line);box-shadow:0 1px 3px rgba(16,24,40,.06)">'+
       '<div class="flex items-center gap-1.5" style="margin-bottom:2px">'+
-        '<span style="width:7px;height:7px;border-radius:50%;background:'+topColor+';flex-shrink:0"></span>'+
-        '<span style="font-size:12.5px;font-weight:700;color:var(--txt)">'+fmtFull(oldest.t)+'</span>'+
+        '<span style="width:6px;height:6px;border-radius:50%;background:'+topColor+';flex-shrink:0"></span>'+
+        '<span style="font-size:10.5px;font-weight:700;color:var(--txt)">'+fmtFull(oldest.t)+'</span>'+
       '</div>'+
+      '<div class="text-[8px]" style="color:var(--mut);margin-bottom:6px;padding-left:10.5px">'+subt+'</div>'+
+      rowsHtml+
+    '</div>';
+})();
       '<div class="text-[9.5px]" style="color:var(--mut);margin-bottom:8px;padding-left:13px">'+subt+'</div>'+
       rowsHtml+
     '</div>';
