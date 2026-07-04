@@ -310,7 +310,7 @@ RENDER.resumen=()=>{
    kpi('Descuentos','−'+Fm(periodDesc),descPct.toFixed(1)+'% sobre bruto',undefined,'#e11d48')+
    kpi('Facturación NETA',Fm(neto),'bruto − descuentos',undefined,'#16a34a')+
    kpi('Ticket promedio',F(tkAvg),'por comanda',undefined,'#2563eb');
- const strip='<div class="card p-4 mt-4 flex flex-wrap items-center gap-x-8 gap-y-2 text-sm">'+
+ const strip='<div class="card p-4 mt-4 flex flex-wrap items-center text-sm" style="gap:.5rem 2rem">'+
    '<div><span style="color:var(--mut)">Propias (SRL): </span><b>'+Fm(g.SRL)+'</b></div>'+
    (g.Franquicias>0?'<div><span style="color:var(--mut)">Franquicias: </span><b>'+Fm(g.Franquicias)+'</b></div>':'')+
    '<div class="flex items-center gap-2"><span style="color:var(--mut)">Resultado:</span> <b>'+Fm(g.Total)+'</b> <span style="color:#e11d48">− '+Fm(periodDesc)+'</span> <span style="color:var(--mut)">=</span> <b style="color:#16a34a">'+Fm(neto)+' neto</b></div></div>';
@@ -691,10 +691,10 @@ RENDER.fiscal=()=>{const brs=selBrs(fFisc);const c=mergeDict(brs,'comprobante');
   return {suc:b,pct:fab/a.gross*100};
  }).filter(x=>x&&x.pct>=UMBRAL_FAB_ALTO).sort((a,b)=>b.pct-a.pct);
  const alertaHtml=alertBranches.length?
-  '<div class="card p-4 mb-4" style="background:#fef3c7;border:1px solid #f59e0b">'+
-  '<div class="flex items-center gap-2 mb-1"><span style="color:#b45309">⚠</span>'+
-  '<span class="font-semibold" style="color:#92400e">'+alertBranches.length+' sucursal'+(alertBranches.length>1?'es':'')+' supera'+(alertBranches.length>1?'n':'')+' '+UMBRAL_FAB_ALTO+'% de FAB</span></div>'+
-  '<div class="text-[12px]" style="color:var(--mut)">'+alertBranches.map(x=>x.suc+' ('+x.pct.toFixed(1)+'%)').join(' · ')+'</div>'+
+  '<div class="card mb-4" style="background:#fef3c7;border:1px solid #f59e0b;padding:14px 16px">'+
+  '<div class="flex items-center gap-2" style="margin-bottom:6px;line-height:1.3"><span style="color:#b45309;font-size:16px;line-height:1">⚠</span>'+
+  '<span class="font-semibold" style="color:#92400e;line-height:1.3">'+alertBranches.length+' sucursal'+(alertBranches.length>1?'es':'')+' supera'+(alertBranches.length>1?'n':'')+' '+UMBRAL_FAB_ALTO+'% de FAB</span></div>'+
+  '<div class="text-[12px]" style="color:#92400e;opacity:.75;line-height:1.4">'+alertBranches.map(x=>x.suc+' ('+x.pct.toFixed(1)+'%)').join(' · ')+'</div>'+
   '</div>':'';
  const filaComp=(x,i)=>{
   const dv=cd[x.raw]||0; // negativo
@@ -705,7 +705,7 @@ RENDER.fiscal=()=>{const brs=selBrs(fFisc);const c=mergeDict(brs,'comprobante');
   return '<div class="py-3" style="border-bottom:1px solid var(--line)">'+
    '<div class="flex justify-between items-center mb-1">'+
    '<span class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full" style="background:'+PAL[i%PAL.length]+'"></span>'+x.k+'</span>'+
-   '<span class="flex items-baseline gap-1"><span class="font-semibold">'+F(x.v)+'</span><span class="text-[11px]" style="'+(esAlerta?'color:#b45309;background:#fef3c7':'color:#0369a1;background:#eff6ff')+';padding:1px 6px;border-radius:4px;font-weight:600">'+fp+'%</span></span></div>'+
+   '<span class="flex items-center gap-1"><span class="font-semibold">'+F(x.v)+'</span><span class="text-[11px]" style="'+(esAlerta?'color:#b45309;background:#fef3c7':'color:#0369a1;background:#eff6ff')+';padding:2px 6px;border-radius:4px;font-weight:600;line-height:1.2;display:inline-block">'+fp+'%</span></span></div>'+
    (dv<0?'<div class="flex justify-between text-[12px] pl-5"><span style="color:#e11d48">Descuentos</span><span style="color:#e11d48">− '+F(Math.abs(dv))+'</span></div>':'')+
    '<div class="flex justify-between text-[12px] pl-5"><span class="font-semibold">Neto</span><span class="font-bold" style="color:#16a34a">'+F(neto)+'</span></div>'+
    '</div>';
