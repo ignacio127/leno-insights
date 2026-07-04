@@ -705,7 +705,7 @@ RENDER.fiscal=()=>{const brs=selBrs(fFisc);const c=mergeDict(brs,'comprobante');
   return '<div class="py-3" style="border-bottom:1px solid var(--line)">'+
    '<div class="flex justify-between items-center mb-1">'+
    '<span class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full" style="background:'+PAL[i%PAL.length]+'"></span>'+x.k+'</span>'+
-   '<span class="flex items-baseline gap-1"><span class="font-semibold">'+F(x.v)+'</span><span class="text-[11px]" style="'+(esAlerta?'color:#b45309;background:#fef3c7;padding:1px 6px;border-radius:4px':'color:var(--mut)')+'">'+fp+'%</span></span></div>'+
+   '<span class="flex items-baseline gap-1"><span class="font-semibold">'+F(x.v)+'</span><span class="text-[11px]" style="'+(esAlerta?'color:#b45309;background:#fef3c7':'color:#0369a1;background:#eff6ff')+';padding:1px 6px;border-radius:4px;font-weight:600">'+fp+'%</span></span></div>'+
    (dv<0?'<div class="flex justify-between text-[12px] pl-5"><span style="color:#e11d48">Descuentos</span><span style="color:#e11d48">− '+F(Math.abs(dv))+'</span></div>':'')+
    '<div class="flex justify-between text-[12px] pl-5"><span class="font-semibold">Neto</span><span class="font-bold" style="color:#16a34a">'+F(neto)+'</span></div>'+
    '</div>';
