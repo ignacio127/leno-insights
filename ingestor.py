@@ -457,7 +457,15 @@ def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
     CUENTA_MAP_SRL/CUENTA_MAP_FRANQ sin tener que pedir otra extracción manual.
     Filtra pago != True: no confirmado todavía con datos reales que existan
     filas con pago:false (cuenta corriente sin cobrar), se deja el filtro por
-    las dudas para no contar como venta algo pendiente de cobro."""
+    las dudas para no contar como venta algo pendiente de cobro.
+
+    NCB/SID: cuando cuenta_id llega VACÍO de Gesdatta (no hay texto que
+    mapear), NO es un gap de diccionario -- Ramiro confirmó revisando comanda
+    por comanda que una parte son Notas de Crédito y otra parte queda sin
+    identificar, y la API no expone ningún campo para separar ambos casos.
+    Por eso va a su propia categoría "NCB/SID" y NO entra en sin_clasificar_raw
+    (que se reserva para texto real no mapeado -- un gap de diccionario
+    accionable, como pasó con "NAVE A COBRAR")."""
     rows = api_call(API_URL_CUENTAS, cliente, suc, desde, hasta, email, pw)
     if rows is None:
         return None, None, None
@@ -471,10 +479,13 @@ def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
         except Exception:
             continue
         cuenta_id_crudo = r.get("cuenta_id", "")
-        cat = normalizar_cuenta(cuenta_id_crudo, branch, grupo)
         monto = num(r.get("total"))
-        if cat == "Sin clasificar":
-            sin_clasificar_raw[cuenta_id_crudo or "(vacío)"] += monto
+        if not (cuenta_id_crudo or "").strip():
+            cat = "NCB/SID"
+        else:
+            cat = normalizar_cuenta(cuenta_id_crudo, branch, grupo)
+            if cat == "Sin clasificar":
+                sin_clasificar_raw[cuenta_id_crudo] += monto
         entradas[(d, cat)].append(monto)
 
     out = defaultdict(lambda: defaultdict(float))
