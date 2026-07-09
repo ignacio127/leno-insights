@@ -452,14 +452,23 @@ def normalizar_cuenta(cuenta_id, branch, grupo):
 # Y clusters de venta real de $14.100 x4 / $20.000 x4 -- magnitud y repetición NO
 # alcanzan para separarlos (ambos < o cerca de $100K, ambos con 3-4 repeticiones).
 #
-# CRITERIO ACTUAL: número de comprobante. Se confirmó con 3 días reales de Peron
-# (02/07, 04/07, 07/07) que el gap exacto de cada día coincide, al peso, con UN
-# solo cluster cuyos comprobantes son consecutivos o están espaciados de forma
-# perfectamente regular (ej. CMD-2450/2451 seguidos; CMD-2317/2319/2321 cada 2) --
-# la firma de una comanda sintética insertada por Gesdatta en el lote. Los
-# clusters de venta real (mismo monto, distinta cantidad de repeticiones) tienen
-# comprobantes salteados al azar, sin ningún patrón -- pedidos independientes de
-# clientes distintos. Ver es_cluster_sospechoso().
+# INTENTO 2 (solo espaciado de comprobante, ya reemplazado): funcionó perfecto
+# en los 3 casos chicos de Peron jul-2026 (gap 0,0% exacto) pero REGRESIONÓ el
+# caso grande ya resuelto de Peron jun-2026 (+40,21% en vez de +1,46%) e
+# Independencia (+47,64% jun, +21,09% jul) -- un lote de 20-30+ comandas en un
+# mes completo no siempre tiene comprobantes perfectamente consecutivos/parejos
+# (hay pedidos reales intercalados en el medio), así que el espaciado solo no
+# detecta los lotes grandes que el criterio de monto+repetición SÍ agarraba bien.
+#
+# CRITERIO ACTUAL: los dos criterios en OR, no uno reemplazando al otro.
+# Se excluye un cluster si CUALQUIERA de los dos se cumple:
+#   (a) monto >= MONTO_SOSPECHOSO_MIN y repetición >= DUP_CLUSTER_MIN
+#       -> agarra lotes grandes obvios sin importar el comprobante (recupera el
+#          comportamiento bueno de Peron/Independencia jun-2026).
+#   (b) espaciado de comprobante sospechoso (ver es_cluster_sospechoso)
+#       -> agarra lotes chicos que el piso de monto no ve (Peron jul-2026).
+# Ningún caso real confirmado hasta ahora activa (a) y no (b) o viceversa de
+# forma contradictoria, pero no está probado contra las 7 sucursales todavía.
 def es_cluster_sospechoso(comprobantes):
     """comprobantes: lista de N° de comprobante (int) que comparten el mismo
     día+categoría+monto. True si el espaciado entre ellos es perfectamente
@@ -485,6 +494,10 @@ _COMPROBANTE_NUM_RE = re.compile(r"(\d+)$")
 def _comprobante_num(comprobante_str):
     m = _COMPROBANTE_NUM_RE.search(str(comprobante_str or ""))
     return int(m.group(1)) if m else None
+
+
+DUP_CLUSTER_MIN = 5
+MONTO_SOSPECHOSO_MIN = 100_000
 
 
 def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
@@ -554,10 +567,13 @@ def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
         for monto, comps in por_monto.items():
             if not monto:
                 continue
-            comps_validos = [c for c in comps if c is not None]
-            if len(comps_validos) != len(comps) or not es_cluster_sospechoso(comps_validos):
-                continue  # sin comprobante confiable para todos, o espaciado no sospechoso -> venta real
             rep = len(comps)
+            comps_validos = [c for c in comps if c is not None]
+            criterio_a = monto >= MONTO_SOSPECHOSO_MIN and rep >= DUP_CLUSTER_MIN
+            criterio_b = (len(comps_validos) == len(comps)
+                          and es_cluster_sospechoso(comps_validos))
+            if not (criterio_a or criterio_b):
+                continue  # ni lote grande obvio ni espaciado sospechoso -> venta real
             excluido = monto * (rep - 1)
             monto_excluido_total += excluido
             montos_dup.add(monto)
