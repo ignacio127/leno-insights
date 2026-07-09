@@ -433,16 +433,30 @@ def normalizar_cuenta(cuenta_id, branch, grupo):
     return mapa.get(s, "Sin clasificar")
 
 
+# Confirmado con datos reales de Peron e Independencia (jun-2026): cuando el mismo
+# monto exacto se repite DUP_CLUSTER_MIN+ veces el mismo día y la misma cuenta, en
+# comprobantes distintos, NO son ventas reales -- es una liquidación de plataforma
+# (Pedidos Ya / Nave) o un cierre de caja en lote que Gesdatta pega en cada comanda
+# del lote en vez de repartir una vez por pedido. Llegó a explicar 40-67% del total
+# de una sucursal en un mes. Se conserva 1 sola ocurrencia del monto del cluster y
+# el resto se excluye -- pero SIEMPRE queda registrado en duplicados_excluidos para
+# que build.py lo muestre, nunca se descuenta en silencio.
+DUP_CLUSTER_MIN = 5
+
+
 def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
-    """Devuelve {date: {categoria: monto}} para una sucursal y rango de fechas.
-    None = mismo criterio que comandas: 'sin dato esta corrida' (no se pisa lo
-    que ya había). Filtra pago != True: no confirmado todavía con datos reales
-    que existan filas con pago:false (cuenta corriente sin cobrar), se deja el
-    filtro por las dudas para no contar como venta algo pendiente de cobro."""
+    """Devuelve (dailymap, duplicados) para una sucursal y rango de fechas.
+    dailymap: {date: {categoria: monto}} | None. None = mismo criterio que
+    comandas: 'sin dato esta corrida' (no se pisa lo que ya había).
+    duplicados: None si no se detectó ningún cluster sospechoso, o
+    {"monto_excluido": X, "clusters": [...]} con el detalle de lo que se sacó.
+    Filtra pago != True: no confirmado todavía con datos reales que existan
+    filas con pago:false (cuenta corriente sin cobrar), se deja el filtro por
+    las dudas para no contar como venta algo pendiente de cobro."""
     rows = api_call(API_URL_CUENTAS, cliente, suc, desde, hasta, email, pw)
     if rows is None:
-        return None
-    out = defaultdict(lambda: defaultdict(float))
+        return None, None
+    entradas = defaultdict(list)  # (date, categoria) -> [monto, monto, ...]
     for r in rows:
         if r.get("pago") is not True:
             continue
@@ -451,12 +465,43 @@ def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
         except Exception:
             continue
         cat = normalizar_cuenta(r.get("cuenta_id", ""), branch, grupo)
-        out[d][cat] += num(r.get("total"))
-    return {d: dict(cats) for d, cats in out.items()}
+        entradas[(d, cat)].append(num(r.get("total")))
+
+    out = defaultdict(lambda: defaultdict(float))
+    clusters = []
+    monto_excluido_total = 0.0
+    for (d, cat), montos in entradas.items():
+        cnt = Counter(montos)
+        for monto, rep in cnt.items():
+            if monto and rep >= DUP_CLUSTER_MIN:
+                excluido = monto * (rep - 1)
+                monto_excluido_total += excluido
+                clusters.append({
+                    "fecha": d.isoformat(), "categoria": cat,
+                    "monto": round(monto), "repeticiones": rep,
+                    "excluido": round(excluido),
+                })
+        # deja 1 sola ocurrencia de cada monto que forma parte de un cluster
+        montos_dup = {monto for monto, rep in cnt.items() if monto and rep >= DUP_CLUSTER_MIN}
+        vistos = defaultdict(int)
+        montos_ajustados = []
+        for m in montos:
+            if m in montos_dup:
+                vistos[m] += 1
+                if vistos[m] > 1:
+                    continue
+            montos_ajustados.append(m)
+        out[d][cat] += sum(montos_ajustados)
+
+    dailymap = {d: dict(cats) for d, cats in out.items()}
+    duplicados = {"monto_excluido": round(monto_excluido_total), "clusters": clusters} if clusters else None
+    return dailymap, duplicados
 
 
-def rebuild_medios_pago(master, periodo, daily_cuenta_by_branch):
+def rebuild_medios_pago(master, periodo, daily_cuenta_by_branch, dup_by_branch=None):
     """daily_cuenta_by_branch: {branch: {date: {categoria: monto}} | None}.
+    dup_by_branch: {branch: {"monto_excluido":X,"clusters":[...]} | None} --
+    lo que fetch_medios_pago descartó por sospecha de liquidación duplicada.
 
     Guarda total por período (branch_tot-like) y desglose semanal, usando las
     MISMAS semanas ISO que rebuild_weekly_monthly (_semana_label) para que
@@ -472,6 +517,7 @@ def rebuild_medios_pago(master, periodo, daily_cuenta_by_branch):
     por_periodo = mp.setdefault("por_periodo", {})
     por_periodo[periodo] = por_periodo.get(periodo, {})
     semanal = mp.setdefault("semanal", {})  # {branch: {semana_label: {categoria: monto}}}
+    dup_periodo = mp.setdefault("duplicados_excluidos", {}).setdefault(periodo, {})
 
     for branch, dailymap in daily_cuenta_by_branch.items():
         if not dailymap:
@@ -487,9 +533,14 @@ def rebuild_medios_pago(master, periodo, daily_cuenta_by_branch):
         for wl, cats in semanas_tocadas.items():
             sem_branch[wl] = {k: round(v) for k, v in cats.items()}
         por_periodo[periodo][branch] = {k: round(v) for k, v in tot_branch.items()}
+        dup = (dup_by_branch or {}).get(branch)
+        if dup:
+            dup_periodo[branch] = dup
+        elif branch in dup_periodo:
+            del dup_periodo[branch]  # esta corrida no encontró clusters -> no dejar un aviso viejo colgado
 
 
-def chequear_reconciliacion_medios_pago(master, periodo, umbral_pct=2.0):
+def chequear_reconciliacion_medios_pago(master, periodo, umbral_pct=15.0):
     """Compara la suma de medios_pago por sucursal contra branch_tot (ya
     calculado desde restoVentasComanda). Si el desvío supera umbral_pct, queda
     marcado ok:false para que build.py lo muestre como alerta, en vez de
@@ -837,6 +888,7 @@ def main():
     print(f"\n=== Ingesta {P}  ({args.desde} → {args.hasta})  ·  {len(BRANCHES)} sucursales ===")
     A_all={};R_all={};D_all={};tot={};py_all={};daily_all={};daily_desc_all={};daily_cupon_py_all={};sc_all={}
     daily_cuenta_all={}
+    dup_cuenta_all={}
     all_ok = True
     fallback_branches = []    # sucursales que usaron valor previo por SIN DATOS esta corrida
     api_error_branches = []   # sucursales cuyo fallo fue error de red/API (no "sin ventas" legítimo)
@@ -847,7 +899,7 @@ def main():
 
     for cliente, suc, branch, grupo in BRANCHES:
         rows = api_call(API_URL, cliente, suc, args.desde, args.hasta, email, pw)
-        daily_cuenta_all[branch] = fetch_medios_pago(cliente, suc, branch, grupo, args.desde, args.hasta, email, pw)
+        daily_cuenta_all[branch], dup_cuenta_all[branch] = fetch_medios_pago(cliente, suc, branch, grupo, args.desde, args.hasta, email, pw)
         if rows is None:
             api_error_branches.append(branch)
         if not rows:
@@ -978,7 +1030,7 @@ def main():
     rebuild_especial2026(master, P, args)
     rebuild_mundiales(master, P, args)
     rebuild_weekly_monthly(master, daily_all, daily_desc_all, args)
-    rebuild_medios_pago(master, P, daily_cuenta_all)
+    rebuild_medios_pago(master, P, daily_cuenta_all, dup_cuenta_all)
     chequear_reconciliacion_medios_pago(master, P)
 
     # --- Sucursales con dato viejo (más de STALE_HOURS sin una corrida fresca ACEPTADA
