@@ -747,8 +747,8 @@ RENDER.fiscal=()=>{const brs=selBrs(fFisc);const c=mergeDict(brs,'comprobante');
 //      Caja PayWay->'Tarjeta (PayWay)', Caja Nave->Nave, Pedidos Ya a cobrar->PedidosYa.
 // El mapeo cuenta_id->categoría vive en ingestor.py; acá solo se lee el resultado.
 // ===========================================================================
-const MP_CATS=['Efectivo','LENO+ (canal propio)','MercadoPago/QR','Tarjeta (PayWay)','Nave','PedidosYa','Sin clasificar'];
-const MP_PAL={'Efectivo':'#E2001A','LENO+ (canal propio)':'#8b5cf6','MercadoPago/QR':'#10b981','Tarjeta (PayWay)':'#2563eb','Nave':'#0ea5e9','PedidosYa':'#FA0050','Sin clasificar':'#9aa1b2'};
+const MP_CATS=['Efectivo','LENO+ (canal propio)','MercadoPago/QR','Tarjeta (PayWay)','Nave','PedidosYa','Pendiente','NCB/SID','Sin clasificar'];
+const MP_PAL={'Efectivo':'#E2001A','LENO+ (canal propio)':'#8b5cf6','MercadoPago/QR':'#10b981','Tarjeta (PayWay)':'#2563eb','Nave':'#0ea5e9','PedidosYa':'#FA0050','Pendiente':'#64748b','NCB/SID':'#d97706','Sin clasificar':'#9aa1b2'};
 const MP_NA_SRL=['Tarjeta (PayWay)'];
 const MP_NA_FR=['LENO+ (canal propio)'];
 const MP_UMBRAL_EFVO_ALTO=15;   // pts sobre el promedio de red -> riesgo de caja física. Sin calibrar con datos reales aún.
