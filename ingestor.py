@@ -442,7 +442,20 @@ def normalizar_cuenta(cuenta_id, branch, grupo):
 # de una sucursal en un mes. Se conserva 1 sola ocurrencia del monto del cluster y
 # el resto se excluye -- pero SIEMPRE queda registrado en duplicados_excluidos para
 # que build.py lo muestre, nunca se descuenta en silencio.
+#
+# FALSO POSITIVO confirmado con datos reales de Aconquija (jul-2026): un combo de
+# PedidosYa a $8.940 se repitió 21 veces el mismo día -- eso es simplemente un combo
+# popular, no una liquidación en bloque, y el filtro de arriba lo excluía igual
+# (-$734.900 de venta real). La diferencia real entre ambos casos es la MAGNITUD:
+# una liquidación en bloque pega el total del día/lote (ej. $491.220 en Peron) en
+# cada comanda, un valor absurdo para un ticket individual. Un combo real nunca va
+# a superar MONTO_SOSPECHOSO_MIN. Por eso ahora se exige repetición Y magnitud --
+# si algún día aparece un ticket individual legítimo por encima de este piso (ej.
+# un evento/catering grande), va a generar un falso positivo de nuevo y hay que
+# revisar el número, no es una garantía matemática, es un piso calibrado con los
+# dos casos reales que tenemos hasta ahora.
 DUP_CLUSTER_MIN = 5
+MONTO_SOSPECHOSO_MIN = 100_000
 
 
 def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
@@ -473,14 +486,22 @@ def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
     entradas = defaultdict(list)  # (date, categoria) -> [monto, monto, ...]
     sin_clasificar_raw = defaultdict(float)  # cuenta_id crudo -> monto (solo lo NO mapeado)
     for r in rows:
-        if r.get("pago") is not True:
-            continue
         try:
             d = datetime.strptime(r["fecha"], "%d/%m/%Y").date()
         except Exception:
             continue
-        cuenta_id_crudo = r.get("cuenta_id", "")
         monto = num(r.get("total"))
+        if r.get("pago") is not True:
+            # NO se descarta más. Con Independencia confirmamos con datos reales
+            # que esto puede ser cuenta corriente genuina O simplemente el pedido
+            # sigue abierto en el momento exacto de la corrida -- el dashboard se
+            # actualiza 3x/día con datos en vivo de un período que todavía no
+            # cerró. Antes esto generaba una brecha fantasma contra Facturación
+            # (que sí reconoce la venta); ahora queda visible como "Pendiente"
+            # en vez de desaparecer en silencio.
+            entradas[(d, "Pendiente")].append(monto)
+            continue
+        cuenta_id_crudo = r.get("cuenta_id", "")
         if not (cuenta_id_crudo or "").strip():
             cat = "NCB/SID"
         else:
@@ -496,7 +517,7 @@ def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
     for (d, cat), montos in entradas.items():
         cnt = Counter(montos)
         for monto, rep in cnt.items():
-            if monto and rep >= DUP_CLUSTER_MIN:
+            if monto and monto >= MONTO_SOSPECHOSO_MIN and rep >= DUP_CLUSTER_MIN:
                 excluido = monto * (rep - 1)
                 monto_excluido_total += excluido
                 clusters.append({
@@ -505,7 +526,8 @@ def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
                     "excluido": round(excluido),
                 })
         # deja 1 sola ocurrencia de cada monto que forma parte de un cluster
-        montos_dup = {monto for monto, rep in cnt.items() if monto and rep >= DUP_CLUSTER_MIN}
+        montos_dup = {monto for monto, rep in cnt.items()
+                       if monto and monto >= MONTO_SOSPECHOSO_MIN and rep >= DUP_CLUSTER_MIN}
         vistos = defaultdict(int)
         montos_ajustados = []
         for m in montos:
