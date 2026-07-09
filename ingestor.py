@@ -16,6 +16,7 @@ from datetime import date, datetime, timedelta
 
 HERE   = os.path.dirname(os.path.abspath(__file__))
 API_URL = "https://app.gesdatta.com/reportesApi/restoVentasComanda"
+API_URL_CUENTAS = "https://app.gesdatta.com/reportesApi/restoVentasCuenta"
 
 BRANCHES = [
     # (cliente exacto, sucursal_resto_id, nombre_sucursal, grupo)
@@ -60,7 +61,7 @@ def load_env():
 # ===========================================================================
 # API
 # ===========================================================================
-def api_call(cliente, suc, desde, hasta, email, pw, estado=""):
+def api_call(url, cliente, suc, desde, hasta, email, pw, estado=""):
     body = json.dumps({
         "email": email, "password": pw, "cliente": cliente,
         "f_desde": desde, "f_hasta": hasta, "estado": estado,
@@ -72,7 +73,7 @@ def api_call(cliente, suc, desde, hasta, email, pw, estado=""):
         "User-Agent":    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                          "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     }
-    req = urllib.request.Request(API_URL, data=body, headers=headers)
+    req = urllib.request.Request(url, data=body, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=180) as r:
             data = json.loads(r.read().decode("utf-8"))
@@ -389,6 +390,305 @@ def rebuild_weekly_monthly(master, daily_by_branch, daily_desc_by_branch, args):
     def _dsort(f):
         d2, m2 = f.split("/"); return (int(m2), int(d2))
     master.setdefault("daily_data", {})[P] = sorted(prev_daily.values(), key=lambda x: _dsort(x["fecha"]))
+
+# ===========================================================================
+# MEDIOS DE PAGO (restoVentasCuenta) — categorías confirmadas con datos reales
+# (Tafi Viejo + Independencia, jun-2026; FLIP confirmado igual al resto de
+# Franquicias; Barrio Norte = "Rivadavia" en Gesdatta).
+# ===========================================================================
+CUENTA_MAP_SRL = {
+    "CAJA": "Efectivo",
+    "LENO+ EFECTIVO": "Efectivo",
+    "LENO+ A COBRAR": "LENO+ (canal propio)",
+    "MERCADOPAGO A COBRAR": "MercadoPago/QR",
+    "PEDIDOS YA A COBRAR": "PedidosYa",
+    "NAVE A COBRAR": "Nave",  # Aconquija (SRL) sí opera con Nave; se asumía Franquicia-only (sin_clasificar_detalle Junio: $879.200)
+}
+CUENTA_MAP_FRANQ = {
+    "CAJA": "Efectivo",
+    "CAJA MERCADOPAGO": "MercadoPago/QR",
+    "CAJA PAYWAY": "Tarjeta (PayWay)",
+    "CAJA NAVE": "Nave",
+    "PEDIDOS YA A COBRAR": "PedidosYa",
+}
+# Sucursales con nombre distinto en Gesdatta vs. el nombre usado en el dashboard.
+# Si al correr contra las 7 sucursales aparece otro alias, agregarlo acá.
+ALIAS_SUCURSAL = {"Barrio Norte": "RIVADAVIA"}
+
+
+def normalizar_cuenta(cuenta_id, branch, grupo):
+    """cuenta_id crudo de Gesdatta -> categoría canónica.
+
+    Case-insensitive y con strip del sufijo de sucursal / '($)', a propósito:
+    ya tuvimos un bug de capitalización con 'Flip'/'FLIP' en build.py y no
+    queremos repetirlo acá con 'CAJA' vs 'Caja' vs 'caja'. Todo lo que no
+    matchea cae en 'Sin clasificar' -- no se pierde, queda visible.
+    """
+    s = (cuenta_id or "").upper().strip()
+    s = s.replace("($)", "").strip()
+    for alias in (branch, ALIAS_SUCURSAL.get(branch, branch)):
+        if alias:
+            s = s.replace(alias.upper(), "").strip()
+    s = re.sub(r"\s+", " ", s)
+    mapa = CUENTA_MAP_SRL if grupo == "SRL" else CUENTA_MAP_FRANQ
+    return mapa.get(s, "Sin clasificar")
+
+
+# Confirmado con datos reales de Peron e Independencia (jun-2026): cuando el mismo
+# monto exacto se repite varias veces el mismo día y la misma cuenta, en
+# comprobantes distintos, a veces NO son ventas reales -- es una liquidación de
+# plataforma (Pedidos Ya / Nave) o un cierre de caja en lote que Gesdatta pega en
+# cada comanda del lote en vez de repartir una vez por pedido. Llegó a explicar
+# 40-67% del total de una sucursal en un mes.
+#
+# FALSO POSITIVO confirmado con datos reales de Aconquija (jul-2026): un combo de
+# PedidosYa a $8.940 se repitió 21 veces el mismo día -- eso es simplemente un
+# combo popular, no una liquidación en bloque (-$734.900 de venta real si se
+# excluía por monto/repetición nomás).
+#
+# INTENTO 1 (DUP_CLUSTER_MIN + MONTO_SOSPECHOSO_MIN, ya reemplazado): exigir
+# repetición Y magnitud. Falló con datos reales de Peron (jul-2026): el mismo día
+# 04/07 tuvo un cluster real de $121.000 x3 (explica el 100% del gap de ese día)
+# Y clusters de venta real de $14.100 x4 / $20.000 x4 -- magnitud y repetición NO
+# alcanzan para separarlos (ambos < o cerca de $100K, ambos con 3-4 repeticiones).
+#
+# INTENTO 2 (solo espaciado de comprobante, ya reemplazado): funcionó perfecto
+# en los 3 casos chicos de Peron jul-2026 (gap 0,0% exacto) pero REGRESIONÓ el
+# caso grande ya resuelto de Peron jun-2026 (+40,21% en vez de +1,46%) e
+# Independencia (+47,64% jun, +21,09% jul) -- un lote de 20-30+ comandas en un
+# mes completo no siempre tiene comprobantes perfectamente consecutivos/parejos
+# (hay pedidos reales intercalados en el medio), así que el espaciado solo no
+# detecta los lotes grandes que el criterio de monto+repetición SÍ agarraba bien.
+#
+# CRITERIO ACTUAL: los dos criterios en OR, no uno reemplazando al otro.
+# Se excluye un cluster si CUALQUIERA de los dos se cumple:
+#   (a) monto >= MONTO_SOSPECHOSO_MIN y repetición >= DUP_CLUSTER_MIN
+#       -> agarra lotes grandes obvios sin importar el comprobante (recupera el
+#          comportamiento bueno de Peron/Independencia jun-2026).
+#   (b) espaciado de comprobante sospechoso (ver es_cluster_sospechoso)
+#       -> agarra lotes chicos que el piso de monto no ve (Peron jul-2026).
+# Ningún caso real confirmado hasta ahora activa (a) y no (b) o viceversa de
+# forma contradictoria, pero no está probado contra las 7 sucursales todavía.
+def es_cluster_sospechoso(comprobantes):
+    """comprobantes: lista de N° de comprobante (int) que comparten el mismo
+    día+categoría+monto. True si el espaciado entre ellos es perfectamente
+    regular Y compacto (paso <=3) -- eso es lo que separó, con datos reales,
+    los 3 duplicados confirmados de Peron (jul-2026) de los clusters de venta
+    real del mismo día. Con solo 2 comprobantes se exige paso==1 (consecutivos
+    estrictos) porque dos puntos siempre "parecen" un espaciado regular."""
+    nums = sorted(comprobantes)
+    if len(nums) < 2:
+        return False
+    diffs = [nums[i + 1] - nums[i] for i in range(len(nums) - 1)]
+    if len(set(diffs)) != 1:
+        return False
+    paso = diffs[0]
+    if len(nums) >= 3:
+        return 0 < paso <= 3
+    return paso == 1
+
+
+_COMPROBANTE_NUM_RE = re.compile(r"(\d+)$")
+
+
+def _comprobante_num(comprobante_str):
+    m = _COMPROBANTE_NUM_RE.search(str(comprobante_str or ""))
+    return int(m.group(1)) if m else None
+
+
+DUP_CLUSTER_MIN = 5
+MONTO_SOSPECHOSO_MIN = 100_000
+
+
+def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
+    """Devuelve (dailymap, duplicados, sin_clasificar_raw) para una sucursal y
+    rango de fechas.
+    dailymap: {date: {categoria: monto}} | None. None = mismo criterio que
+    comandas: 'sin dato esta corrida' (no se pisa lo que ya había).
+    duplicados: None si no se detectó ningún cluster sospechoso, o
+    {"monto_excluido": X, "clusters": [...]} con el detalle de lo que se sacó.
+    sin_clasificar_raw: None si no hubo nada sin mapear, o {cuenta_id_crudo:
+    monto} con el TEXTO EXACTO que llegó de Gesdatta -- para poder agregarlo a
+    CUENTA_MAP_SRL/CUENTA_MAP_FRANQ sin tener que pedir otra extracción manual.
+    Filtra pago != True: no confirmado todavía con datos reales que existan
+    filas con pago:false (cuenta corriente sin cobrar), se deja el filtro por
+    las dudas para no contar como venta algo pendiente de cobro.
+
+    NCB/SID: por decisión de Ramiro, en el desglose visible NO existe una
+    categoría "Sin clasificar" -- todo lo que no se pueda mapear a un medio de
+    pago real (cuenta_id vacío, Notas de Crédito, o texto que todavía no está
+    en CUENTA_MAP_SRL/FRANQ) cae en "NCB/SID". El texto crudo de lo que SÍ
+    tenía cuenta_id pero no matcheó ningún mapeo se sigue guardando en
+    sin_clasificar_raw (y de ahí a sin_clasificar_detalle en master.json) para
+    poder seguir auditando y cerrando gaps de diccionario nuevos (como pasó
+    con "NAVE A COBRAR") sin que la plata quede invisible en el medio."""
+    rows = api_call(API_URL_CUENTAS, cliente, suc, desde, hasta, email, pw)
+    if rows is None:
+        return None, None, None
+    entradas = defaultdict(list)  # (date, categoria) -> [(monto, comprobante_num_o_None), ...]
+    sin_clasificar_raw = defaultdict(float)  # cuenta_id crudo -> monto (solo lo NO mapeado)
+    for r in rows:
+        try:
+            d = datetime.strptime(r["fecha"], "%d/%m/%Y").date()
+        except Exception:
+            continue
+        monto = num(r.get("total"))
+        comp_num = _comprobante_num(r.get("comprobante"))
+        if r.get("pago") is not True:
+            # NO se descarta más. Con Independencia confirmamos con datos reales
+            # que esto puede ser cuenta corriente genuina O simplemente el pedido
+            # sigue abierto en el momento exacto de la corrida -- el dashboard se
+            # actualiza 3x/día con datos en vivo de un período que todavía no
+            # cerró. Antes esto generaba una brecha fantasma contra Facturación
+            # (que sí reconoce la venta); ahora queda visible como "Pendiente"
+            # en vez de desaparecer en silencio.
+            entradas[(d, "Pendiente")].append((monto, comp_num))
+            continue
+        cuenta_id_crudo = r.get("cuenta_id", "")
+        if not (cuenta_id_crudo or "").strip():
+            cat = "NCB/SID"
+        else:
+            cat = normalizar_cuenta(cuenta_id_crudo, branch, grupo)
+            if cat == "Sin clasificar":
+                sin_clasificar_raw[cuenta_id_crudo] += monto
+                cat = "NCB/SID"  # visible como NCB/SID; el texto crudo queda auditado en sin_clasificar_raw
+        entradas[(d, cat)].append((monto, comp_num))
+
+    out = defaultdict(lambda: defaultdict(float))
+    clusters = []
+    monto_excluido_total = 0.0
+    for (d, cat), pares in entradas.items():
+        # agrupar por monto exacto, juntando los comprobantes de cada uno
+        por_monto = defaultdict(list)
+        for monto, comp_num in pares:
+            por_monto[monto].append(comp_num)
+
+        montos_dup = set()
+        for monto, comps in por_monto.items():
+            if not monto:
+                continue
+            rep = len(comps)
+            comps_validos = [c for c in comps if c is not None]
+            criterio_a = monto >= MONTO_SOSPECHOSO_MIN and rep >= DUP_CLUSTER_MIN
+            criterio_b = (len(comps_validos) == len(comps)
+                          and es_cluster_sospechoso(comps_validos))
+            if not (criterio_a or criterio_b):
+                continue  # ni lote grande obvio ni espaciado sospechoso -> venta real
+            excluido = monto * (rep - 1)
+            monto_excluido_total += excluido
+            montos_dup.add(monto)
+            clusters.append({
+                "fecha": d.isoformat(), "categoria": cat,
+                "monto": round(monto), "repeticiones": rep,
+                "excluido": round(excluido),
+            })
+
+        # deja 1 sola ocurrencia de cada monto que forma parte de un cluster
+        vistos = defaultdict(int)
+        montos_ajustados = []
+        for monto, _ in pares:
+            if monto in montos_dup:
+                vistos[monto] += 1
+                if vistos[monto] > 1:
+                    continue
+            montos_ajustados.append(monto)
+        out[d][cat] += sum(montos_ajustados)
+
+    dailymap = {d: dict(cats) for d, cats in out.items()}
+    duplicados = {"monto_excluido": round(monto_excluido_total), "clusters": clusters} if clusters else None
+    sc_raw = {k: round(v) for k, v in sin_clasificar_raw.items()} if sin_clasificar_raw else None
+    return dailymap, duplicados, sc_raw
+
+
+def rebuild_medios_pago(master, periodo, daily_cuenta_by_branch, dup_by_branch=None, sc_raw_by_branch=None):
+    """daily_cuenta_by_branch: {branch: {date: {categoria: monto}} | None}.
+    dup_by_branch: {branch: {"monto_excluido":X,"clusters":[...]} | None} --
+    lo que fetch_medios_pago descartó por sospecha de liquidación duplicada.
+    sc_raw_by_branch: {branch: {cuenta_id_crudo: monto} | None} -- lo que cayó
+    en "Sin clasificar", con el texto EXACTO tal como llegó de Gesdatta, para
+    poder agregarlo al mapeo sin pedir otra extracción manual.
+
+    Guarda total por período (branch_tot-like) y desglose semanal, usando las
+    MISMAS semanas ISO que rebuild_weekly_monthly (_semana_label) para que
+    'Medios de Pago' y 'Resumen' coincidan.
+
+    NOTA: el merge semanal acá recalcula desde cero las semanas tocadas en esta
+    corrida -- no tiene el manejo fino de "preservar semana vieja si esta
+    corrida no trajo dato" que sí tiene rebuild_weekly_monthly. Alcanza porque
+    cada corrida trae el rango completo pedido; si en el futuro se corre con
+    rangos parciales día por día, revisar este merge con el mismo cuidado.
+    """
+    mp = master.setdefault("medios_pago", {})
+    por_periodo = mp.setdefault("por_periodo", {})
+    por_periodo[periodo] = por_periodo.get(periodo, {})
+    semanal = mp.setdefault("semanal", {})  # {branch: {semana_label: {categoria: monto}}}
+    dup_periodo = mp.setdefault("duplicados_excluidos", {}).setdefault(periodo, {})
+    sc_periodo = mp.setdefault("sin_clasificar_detalle", {}).setdefault(periodo, {})
+
+    for branch, dailymap in daily_cuenta_by_branch.items():
+        if not dailymap:
+            continue  # None (sin dato esta corrida) o {} (sin filas) -> no tocar lo que ya había
+        tot_branch = defaultdict(float)
+        sem_branch = semanal.setdefault(branch, {})
+        semanas_tocadas = defaultdict(lambda: defaultdict(float))
+        for d, cats in dailymap.items():
+            wl, _ = _semana_label(d)
+            for cat, monto in cats.items():
+                semanas_tocadas[wl][cat] += monto
+                tot_branch[cat] += monto
+        for wl, cats in semanas_tocadas.items():
+            sem_branch[wl] = {k: round(v) for k, v in cats.items()}
+        por_periodo[periodo][branch] = {k: round(v) for k, v in tot_branch.items()}
+        dup = (dup_by_branch or {}).get(branch)
+        if dup:
+            dup_periodo[branch] = dup
+        elif branch in dup_periodo:
+            del dup_periodo[branch]  # esta corrida no encontró clusters -> no dejar un aviso viejo colgado
+        sc_raw = (sc_raw_by_branch or {}).get(branch)
+        if sc_raw:
+            sc_periodo[branch] = sc_raw
+        elif branch in sc_periodo:
+            del sc_periodo[branch]  # esta corrida no encontró nada sin clasificar -> no dejar un aviso viejo colgado
+
+
+def chequear_reconciliacion_medios_pago(master, periodo, umbral_pct=15.0):
+    """Compara la suma de medios_pago por sucursal contra el NETO de
+    Facturación (branch_tot BRUTO + descuentos del período, que ya vienen
+    negativos) -- NO contra branch_tot crudo.
+    Medios de Pago es, por definición, lo que el cliente efectivamente pagó
+    (neto). Compararlo contra Bruto genera un sesgo negativo estructural del
+    tamaño de la tasa de descuento de cada sucursal, y hace ver como 'problema
+    de cobro' algo que es solo descuento. Confirmado con datos reales: Barrio
+    Norte Jul-2026 (9 días) -- Bruto $8.834.816, Descuentos -$924.069, Neto
+    $7.910.747, Medios de Pago $7.443.187 -> gap vs Bruto -15.75% (falla),
+    gap vs Neto -5.91% (dentro de umbral). 10,46 de los 15,75 puntos eran
+    descuento, no plata sin clasificar/cobrar.
+    Si el desvío contra Neto supera umbral_pct, queda marcado ok:false para
+    que build.py lo muestre como alerta, en vez de confiar en el número sin
+    chequear."""
+    bt = master.get("branch_tot", {}).get(periodo, {})
+    an = master.get("analytics", {}).get(periodo, {})
+    mp = master.get("medios_pago", {}).get("por_periodo", {}).get(periodo, {})
+    out = {}
+    for branch, cats in mp.items():
+        total_mp = sum(cats.values())
+        bruto = bt.get(branch)
+        if not bruto:
+            continue
+        descuentos = an.get(branch, {}).get("descuentos", 0)  # ya viene negativo
+        total_comanda = bruto + descuentos  # Neto
+        if not total_comanda:
+            continue
+        gap_pct = round((total_mp - total_comanda) / total_comanda * 100, 2)
+        out[branch] = {
+            "total_medios_pago": round(total_mp),
+            "total_comanda": round(total_comanda),
+            "gap_pct": gap_pct,
+            "ok": abs(gap_pct) <= umbral_pct,
+        }
+    rec = master.setdefault("medios_pago", {}).setdefault("reconciliacion", {})
+    rec[periodo] = out
+
 
 def audit(branch, A, R):
     g = A["gross"]
@@ -713,6 +1013,9 @@ def main():
 
     print(f"\n=== Ingesta {P}  ({args.desde} → {args.hasta})  ·  {len(BRANCHES)} sucursales ===")
     A_all={};R_all={};D_all={};tot={};py_all={};daily_all={};daily_desc_all={};daily_cupon_py_all={};sc_all={}
+    daily_cuenta_all={}
+    dup_cuenta_all={}
+    sc_raw_cuenta_all={}
     all_ok = True
     fallback_branches = []    # sucursales que usaron valor previo por SIN DATOS esta corrida
     api_error_branches = []   # sucursales cuyo fallo fue error de red/API (no "sin ventas" legítimo)
@@ -722,7 +1025,8 @@ def main():
     now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
     for cliente, suc, branch, grupo in BRANCHES:
-        rows = api_call(cliente, suc, args.desde, args.hasta, email, pw)
+        rows = api_call(API_URL, cliente, suc, args.desde, args.hasta, email, pw)
+        daily_cuenta_all[branch], dup_cuenta_all[branch], sc_raw_cuenta_all[branch] = fetch_medios_pago(cliente, suc, branch, grupo, args.desde, args.hasta, email, pw)
         if rows is None:
             api_error_branches.append(branch)
         if not rows:
@@ -853,6 +1157,8 @@ def main():
     rebuild_especial2026(master, P, args)
     rebuild_mundiales(master, P, args)
     rebuild_weekly_monthly(master, daily_all, daily_desc_all, args)
+    rebuild_medios_pago(master, P, daily_cuenta_all, dup_cuenta_all, sc_raw_cuenta_all)
+    chequear_reconciliacion_medios_pago(master, P)
 
     # --- Sucursales con dato viejo (más de STALE_HOURS sin una corrida fresca ACEPTADA
     # —ni SIN DATOS ni CUARENTENA cuentan como fresca—), calculado sobre el estado YA
@@ -891,7 +1197,7 @@ def main():
     print(f"\n  master.json actualizado · red ${grp['Total']:,.0f} "
           f"(SRL ${grp['SRL']:,.0f} · Franq ${grp['Franquicias']:,.0f})")
     print(f"  Secciones actualizadas: analytics · rankings · descdet · "
-          f"peya · especial2026 · mundiales · weekly · monthly")
+          f"peya · especial2026 · mundiales · weekly · monthly · medios_pago")
     if fallback_branches:
         print(f"  ⚠ ATENCIÓN: {len(fallback_branches)} sucursal(es) fallaron esta corrida y se "
               f"conservó su último valor conocido en vez de ponerlas en cero: "
