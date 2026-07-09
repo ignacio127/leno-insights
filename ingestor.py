@@ -445,18 +445,23 @@ DUP_CLUSTER_MIN = 5
 
 
 def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
-    """Devuelve (dailymap, duplicados) para una sucursal y rango de fechas.
+    """Devuelve (dailymap, duplicados, sin_clasificar_raw) para una sucursal y
+    rango de fechas.
     dailymap: {date: {categoria: monto}} | None. None = mismo criterio que
     comandas: 'sin dato esta corrida' (no se pisa lo que ya había).
     duplicados: None si no se detectó ningún cluster sospechoso, o
     {"monto_excluido": X, "clusters": [...]} con el detalle de lo que se sacó.
+    sin_clasificar_raw: None si no hubo nada sin mapear, o {cuenta_id_crudo:
+    monto} con el TEXTO EXACTO que llegó de Gesdatta -- para poder agregarlo a
+    CUENTA_MAP_SRL/CUENTA_MAP_FRANQ sin tener que pedir otra extracción manual.
     Filtra pago != True: no confirmado todavía con datos reales que existan
     filas con pago:false (cuenta corriente sin cobrar), se deja el filtro por
     las dudas para no contar como venta algo pendiente de cobro."""
     rows = api_call(API_URL_CUENTAS, cliente, suc, desde, hasta, email, pw)
     if rows is None:
-        return None, None
+        return None, None, None
     entradas = defaultdict(list)  # (date, categoria) -> [monto, monto, ...]
+    sin_clasificar_raw = defaultdict(float)  # cuenta_id crudo -> monto (solo lo NO mapeado)
     for r in rows:
         if r.get("pago") is not True:
             continue
@@ -464,8 +469,12 @@ def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
             d = datetime.strptime(r["fecha"], "%d/%m/%Y").date()
         except Exception:
             continue
-        cat = normalizar_cuenta(r.get("cuenta_id", ""), branch, grupo)
-        entradas[(d, cat)].append(num(r.get("total")))
+        cuenta_id_crudo = r.get("cuenta_id", "")
+        cat = normalizar_cuenta(cuenta_id_crudo, branch, grupo)
+        monto = num(r.get("total"))
+        if cat == "Sin clasificar":
+            sin_clasificar_raw[cuenta_id_crudo or "(vacío)"] += monto
+        entradas[(d, cat)].append(monto)
 
     out = defaultdict(lambda: defaultdict(float))
     clusters = []
@@ -495,13 +504,17 @@ def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
 
     dailymap = {d: dict(cats) for d, cats in out.items()}
     duplicados = {"monto_excluido": round(monto_excluido_total), "clusters": clusters} if clusters else None
-    return dailymap, duplicados
+    sc_raw = {k: round(v) for k, v in sin_clasificar_raw.items()} if sin_clasificar_raw else None
+    return dailymap, duplicados, sc_raw
 
 
-def rebuild_medios_pago(master, periodo, daily_cuenta_by_branch, dup_by_branch=None):
+def rebuild_medios_pago(master, periodo, daily_cuenta_by_branch, dup_by_branch=None, sc_raw_by_branch=None):
     """daily_cuenta_by_branch: {branch: {date: {categoria: monto}} | None}.
     dup_by_branch: {branch: {"monto_excluido":X,"clusters":[...]} | None} --
     lo que fetch_medios_pago descartó por sospecha de liquidación duplicada.
+    sc_raw_by_branch: {branch: {cuenta_id_crudo: monto} | None} -- lo que cayó
+    en "Sin clasificar", con el texto EXACTO tal como llegó de Gesdatta, para
+    poder agregarlo al mapeo sin pedir otra extracción manual.
 
     Guarda total por período (branch_tot-like) y desglose semanal, usando las
     MISMAS semanas ISO que rebuild_weekly_monthly (_semana_label) para que
@@ -518,6 +531,7 @@ def rebuild_medios_pago(master, periodo, daily_cuenta_by_branch, dup_by_branch=N
     por_periodo[periodo] = por_periodo.get(periodo, {})
     semanal = mp.setdefault("semanal", {})  # {branch: {semana_label: {categoria: monto}}}
     dup_periodo = mp.setdefault("duplicados_excluidos", {}).setdefault(periodo, {})
+    sc_periodo = mp.setdefault("sin_clasificar_detalle", {}).setdefault(periodo, {})
 
     for branch, dailymap in daily_cuenta_by_branch.items():
         if not dailymap:
@@ -538,6 +552,11 @@ def rebuild_medios_pago(master, periodo, daily_cuenta_by_branch, dup_by_branch=N
             dup_periodo[branch] = dup
         elif branch in dup_periodo:
             del dup_periodo[branch]  # esta corrida no encontró clusters -> no dejar un aviso viejo colgado
+        sc_raw = (sc_raw_by_branch or {}).get(branch)
+        if sc_raw:
+            sc_periodo[branch] = sc_raw
+        elif branch in sc_periodo:
+            del sc_periodo[branch]  # esta corrida no encontró nada sin clasificar -> no dejar un aviso viejo colgado
 
 
 def chequear_reconciliacion_medios_pago(master, periodo, umbral_pct=15.0):
@@ -889,6 +908,7 @@ def main():
     A_all={};R_all={};D_all={};tot={};py_all={};daily_all={};daily_desc_all={};daily_cupon_py_all={};sc_all={}
     daily_cuenta_all={}
     dup_cuenta_all={}
+    sc_raw_cuenta_all={}
     all_ok = True
     fallback_branches = []    # sucursales que usaron valor previo por SIN DATOS esta corrida
     api_error_branches = []   # sucursales cuyo fallo fue error de red/API (no "sin ventas" legítimo)
@@ -899,7 +919,7 @@ def main():
 
     for cliente, suc, branch, grupo in BRANCHES:
         rows = api_call(API_URL, cliente, suc, args.desde, args.hasta, email, pw)
-        daily_cuenta_all[branch], dup_cuenta_all[branch] = fetch_medios_pago(cliente, suc, branch, grupo, args.desde, args.hasta, email, pw)
+        daily_cuenta_all[branch], dup_cuenta_all[branch], sc_raw_cuenta_all[branch] = fetch_medios_pago(cliente, suc, branch, grupo, args.desde, args.hasta, email, pw)
         if rows is None:
             api_error_branches.append(branch)
         if not rows:
@@ -1030,7 +1050,7 @@ def main():
     rebuild_especial2026(master, P, args)
     rebuild_mundiales(master, P, args)
     rebuild_weekly_monthly(master, daily_all, daily_desc_all, args)
-    rebuild_medios_pago(master, P, daily_cuenta_all, dup_cuenta_all)
+    rebuild_medios_pago(master, P, daily_cuenta_all, dup_cuenta_all, sc_raw_cuenta_all)
     chequear_reconciliacion_medios_pago(master, P)
 
     # --- Sucursales con dato viejo (más de STALE_HOURS sin una corrida fresca ACEPTADA
