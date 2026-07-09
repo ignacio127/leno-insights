@@ -435,27 +435,56 @@ def normalizar_cuenta(cuenta_id, branch, grupo):
 
 
 # Confirmado con datos reales de Peron e Independencia (jun-2026): cuando el mismo
-# monto exacto se repite DUP_CLUSTER_MIN+ veces el mismo día y la misma cuenta, en
-# comprobantes distintos, NO son ventas reales -- es una liquidación de plataforma
-# (Pedidos Ya / Nave) o un cierre de caja en lote que Gesdatta pega en cada comanda
-# del lote en vez de repartir una vez por pedido. Llegó a explicar 40-67% del total
-# de una sucursal en un mes. Se conserva 1 sola ocurrencia del monto del cluster y
-# el resto se excluye -- pero SIEMPRE queda registrado en duplicados_excluidos para
-# que build.py lo muestre, nunca se descuenta en silencio.
+# monto exacto se repite varias veces el mismo día y la misma cuenta, en
+# comprobantes distintos, a veces NO son ventas reales -- es una liquidación de
+# plataforma (Pedidos Ya / Nave) o un cierre de caja en lote que Gesdatta pega en
+# cada comanda del lote en vez de repartir una vez por pedido. Llegó a explicar
+# 40-67% del total de una sucursal en un mes.
 #
 # FALSO POSITIVO confirmado con datos reales de Aconquija (jul-2026): un combo de
-# PedidosYa a $8.940 se repitió 21 veces el mismo día -- eso es simplemente un combo
-# popular, no una liquidación en bloque, y el filtro de arriba lo excluía igual
-# (-$734.900 de venta real). La diferencia real entre ambos casos es la MAGNITUD:
-# una liquidación en bloque pega el total del día/lote (ej. $491.220 en Peron) en
-# cada comanda, un valor absurdo para un ticket individual. Un combo real nunca va
-# a superar MONTO_SOSPECHOSO_MIN. Por eso ahora se exige repetición Y magnitud --
-# si algún día aparece un ticket individual legítimo por encima de este piso (ej.
-# un evento/catering grande), va a generar un falso positivo de nuevo y hay que
-# revisar el número, no es una garantía matemática, es un piso calibrado con los
-# dos casos reales que tenemos hasta ahora.
-DUP_CLUSTER_MIN = 5
-MONTO_SOSPECHOSO_MIN = 100_000
+# PedidosYa a $8.940 se repitió 21 veces el mismo día -- eso es simplemente un
+# combo popular, no una liquidación en bloque (-$734.900 de venta real si se
+# excluía por monto/repetición nomás).
+#
+# INTENTO 1 (DUP_CLUSTER_MIN + MONTO_SOSPECHOSO_MIN, ya reemplazado): exigir
+# repetición Y magnitud. Falló con datos reales de Peron (jul-2026): el mismo día
+# 04/07 tuvo un cluster real de $121.000 x3 (explica el 100% del gap de ese día)
+# Y clusters de venta real de $14.100 x4 / $20.000 x4 -- magnitud y repetición NO
+# alcanzan para separarlos (ambos < o cerca de $100K, ambos con 3-4 repeticiones).
+#
+# CRITERIO ACTUAL: número de comprobante. Se confirmó con 3 días reales de Peron
+# (02/07, 04/07, 07/07) que el gap exacto de cada día coincide, al peso, con UN
+# solo cluster cuyos comprobantes son consecutivos o están espaciados de forma
+# perfectamente regular (ej. CMD-2450/2451 seguidos; CMD-2317/2319/2321 cada 2) --
+# la firma de una comanda sintética insertada por Gesdatta en el lote. Los
+# clusters de venta real (mismo monto, distinta cantidad de repeticiones) tienen
+# comprobantes salteados al azar, sin ningún patrón -- pedidos independientes de
+# clientes distintos. Ver es_cluster_sospechoso().
+def es_cluster_sospechoso(comprobantes):
+    """comprobantes: lista de N° de comprobante (int) que comparten el mismo
+    día+categoría+monto. True si el espaciado entre ellos es perfectamente
+    regular Y compacto (paso <=3) -- eso es lo que separó, con datos reales,
+    los 3 duplicados confirmados de Peron (jul-2026) de los clusters de venta
+    real del mismo día. Con solo 2 comprobantes se exige paso==1 (consecutivos
+    estrictos) porque dos puntos siempre "parecen" un espaciado regular."""
+    nums = sorted(comprobantes)
+    if len(nums) < 2:
+        return False
+    diffs = [nums[i + 1] - nums[i] for i in range(len(nums) - 1)]
+    if len(set(diffs)) != 1:
+        return False
+    paso = diffs[0]
+    if len(nums) >= 3:
+        return 0 < paso <= 3
+    return paso == 1
+
+
+_COMPROBANTE_NUM_RE = re.compile(r"(\d+)$")
+
+
+def _comprobante_num(comprobante_str):
+    m = _COMPROBANTE_NUM_RE.search(str(comprobante_str or ""))
+    return int(m.group(1)) if m else None
 
 
 def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
@@ -483,7 +512,7 @@ def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
     rows = api_call(API_URL_CUENTAS, cliente, suc, desde, hasta, email, pw)
     if rows is None:
         return None, None, None
-    entradas = defaultdict(list)  # (date, categoria) -> [monto, monto, ...]
+    entradas = defaultdict(list)  # (date, categoria) -> [(monto, comprobante_num_o_None), ...]
     sin_clasificar_raw = defaultdict(float)  # cuenta_id crudo -> monto (solo lo NO mapeado)
     for r in rows:
         try:
@@ -491,6 +520,7 @@ def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
         except Exception:
             continue
         monto = num(r.get("total"))
+        comp_num = _comprobante_num(r.get("comprobante"))
         if r.get("pago") is not True:
             # NO se descarta más. Con Independencia confirmamos con datos reales
             # que esto puede ser cuenta corriente genuina O simplemente el pedido
@@ -499,7 +529,7 @@ def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
             # cerró. Antes esto generaba una brecha fantasma contra Facturación
             # (que sí reconoce la venta); ahora queda visible como "Pendiente"
             # en vez de desaparecer en silencio.
-            entradas[(d, "Pendiente")].append(monto)
+            entradas[(d, "Pendiente")].append((monto, comp_num))
             continue
         cuenta_id_crudo = r.get("cuenta_id", "")
         if not (cuenta_id_crudo or "").strip():
@@ -509,33 +539,43 @@ def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
             if cat == "Sin clasificar":
                 sin_clasificar_raw[cuenta_id_crudo] += monto
                 cat = "NCB/SID"  # visible como NCB/SID; el texto crudo queda auditado en sin_clasificar_raw
-        entradas[(d, cat)].append(monto)
+        entradas[(d, cat)].append((monto, comp_num))
 
     out = defaultdict(lambda: defaultdict(float))
     clusters = []
     monto_excluido_total = 0.0
-    for (d, cat), montos in entradas.items():
-        cnt = Counter(montos)
-        for monto, rep in cnt.items():
-            if monto and monto >= MONTO_SOSPECHOSO_MIN and rep >= DUP_CLUSTER_MIN:
-                excluido = monto * (rep - 1)
-                monto_excluido_total += excluido
-                clusters.append({
-                    "fecha": d.isoformat(), "categoria": cat,
-                    "monto": round(monto), "repeticiones": rep,
-                    "excluido": round(excluido),
-                })
+    for (d, cat), pares in entradas.items():
+        # agrupar por monto exacto, juntando los comprobantes de cada uno
+        por_monto = defaultdict(list)
+        for monto, comp_num in pares:
+            por_monto[monto].append(comp_num)
+
+        montos_dup = set()
+        for monto, comps in por_monto.items():
+            if not monto:
+                continue
+            comps_validos = [c for c in comps if c is not None]
+            if len(comps_validos) != len(comps) or not es_cluster_sospechoso(comps_validos):
+                continue  # sin comprobante confiable para todos, o espaciado no sospechoso -> venta real
+            rep = len(comps)
+            excluido = monto * (rep - 1)
+            monto_excluido_total += excluido
+            montos_dup.add(monto)
+            clusters.append({
+                "fecha": d.isoformat(), "categoria": cat,
+                "monto": round(monto), "repeticiones": rep,
+                "excluido": round(excluido),
+            })
+
         # deja 1 sola ocurrencia de cada monto que forma parte de un cluster
-        montos_dup = {monto for monto, rep in cnt.items()
-                       if monto and monto >= MONTO_SOSPECHOSO_MIN and rep >= DUP_CLUSTER_MIN}
         vistos = defaultdict(int)
         montos_ajustados = []
-        for m in montos:
-            if m in montos_dup:
-                vistos[m] += 1
-                if vistos[m] > 1:
+        for monto, _ in pares:
+            if monto in montos_dup:
+                vistos[monto] += 1
+                if vistos[monto] > 1:
                     continue
-            montos_ajustados.append(m)
+            montos_ajustados.append(monto)
         out[d][cat] += sum(montos_ajustados)
 
     dailymap = {d: dict(cats) for d, cats in out.items()}
