@@ -16,6 +16,7 @@ from datetime import date, datetime, timedelta
 
 HERE   = os.path.dirname(os.path.abspath(__file__))
 API_URL = "https://app.gesdatta.com/reportesApi/restoVentasComanda"
+API_URL_CUENTAS = "https://app.gesdatta.com/reportesApi/restoVentasCuenta"
 
 BRANCHES = [
     # (cliente exacto, sucursal_resto_id, nombre_sucursal, grupo)
@@ -60,7 +61,7 @@ def load_env():
 # ===========================================================================
 # API
 # ===========================================================================
-def api_call(cliente, suc, desde, hasta, email, pw, estado=""):
+def api_call(url, cliente, suc, desde, hasta, email, pw, estado=""):
     body = json.dumps({
         "email": email, "password": pw, "cliente": cliente,
         "f_desde": desde, "f_hasta": hasta, "estado": estado,
@@ -72,7 +73,7 @@ def api_call(cliente, suc, desde, hasta, email, pw, estado=""):
         "User-Agent":    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                          "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     }
-    req = urllib.request.Request(API_URL, data=body, headers=headers)
+    req = urllib.request.Request(url, data=body, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=180) as r:
             data = json.loads(r.read().decode("utf-8"))
@@ -389,6 +390,128 @@ def rebuild_weekly_monthly(master, daily_by_branch, daily_desc_by_branch, args):
     def _dsort(f):
         d2, m2 = f.split("/"); return (int(m2), int(d2))
     master.setdefault("daily_data", {})[P] = sorted(prev_daily.values(), key=lambda x: _dsort(x["fecha"]))
+
+# ===========================================================================
+# MEDIOS DE PAGO (restoVentasCuenta) — categorías confirmadas con datos reales
+# (Tafi Viejo + Independencia, jun-2026; FLIP confirmado igual al resto de
+# Franquicias; Barrio Norte = "Rivadavia" en Gesdatta).
+# ===========================================================================
+CUENTA_MAP_SRL = {
+    "CAJA": "Efectivo",
+    "LENO+ EFECTIVO": "Efectivo",
+    "LENO+ A COBRAR": "LENO+ (canal propio)",
+    "MERCADOPAGO A COBRAR": "MercadoPago/QR",
+    "PEDIDOS YA A COBRAR": "PedidosYa",
+}
+CUENTA_MAP_FRANQ = {
+    "CAJA": "Efectivo",
+    "CAJA MERCADOPAGO": "MercadoPago/QR",
+    "CAJA PAYWAY": "Tarjeta (PayWay)",
+    "CAJA NAVE": "Nave",
+    "PEDIDOS YA A COBRAR": "PedidosYa",
+}
+# Sucursales con nombre distinto en Gesdatta vs. el nombre usado en el dashboard.
+# Si al correr contra las 7 sucursales aparece otro alias, agregarlo acá.
+ALIAS_SUCURSAL = {"Barrio Norte": "RIVADAVIA"}
+
+
+def normalizar_cuenta(cuenta_id, branch, grupo):
+    """cuenta_id crudo de Gesdatta -> categoría canónica.
+
+    Case-insensitive y con strip del sufijo de sucursal / '($)', a propósito:
+    ya tuvimos un bug de capitalización con 'Flip'/'FLIP' en build.py y no
+    queremos repetirlo acá con 'CAJA' vs 'Caja' vs 'caja'. Todo lo que no
+    matchea cae en 'Sin clasificar' -- no se pierde, queda visible.
+    """
+    s = (cuenta_id or "").upper().strip()
+    s = s.replace("($)", "").strip()
+    for alias in (branch, ALIAS_SUCURSAL.get(branch, branch)):
+        if alias:
+            s = s.replace(alias.upper(), "").strip()
+    s = re.sub(r"\s+", " ", s)
+    mapa = CUENTA_MAP_SRL if grupo == "SRL" else CUENTA_MAP_FRANQ
+    return mapa.get(s, "Sin clasificar")
+
+
+def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
+    """Devuelve {date: {categoria: monto}} para una sucursal y rango de fechas.
+    None = mismo criterio que comandas: 'sin dato esta corrida' (no se pisa lo
+    que ya había). Filtra pago != True: no confirmado todavía con datos reales
+    que existan filas con pago:false (cuenta corriente sin cobrar), se deja el
+    filtro por las dudas para no contar como venta algo pendiente de cobro."""
+    rows = api_call(API_URL_CUENTAS, cliente, suc, desde, hasta, email, pw)
+    if rows is None:
+        return None
+    out = defaultdict(lambda: defaultdict(float))
+    for r in rows:
+        if r.get("pago") is not True:
+            continue
+        try:
+            d = datetime.strptime(r["fecha"], "%d/%m/%Y").date()
+        except Exception:
+            continue
+        cat = normalizar_cuenta(r.get("cuenta_id", ""), branch, grupo)
+        out[d][cat] += num(r.get("total"))
+    return {d: dict(cats) for d, cats in out.items()}
+
+
+def rebuild_medios_pago(master, periodo, daily_cuenta_by_branch):
+    """daily_cuenta_by_branch: {branch: {date: {categoria: monto}} | None}.
+
+    Guarda total por período (branch_tot-like) y desglose semanal, usando las
+    MISMAS semanas ISO que rebuild_weekly_monthly (_semana_label) para que
+    'Medios de Pago' y 'Resumen' coincidan.
+
+    NOTA: el merge semanal acá recalcula desde cero las semanas tocadas en esta
+    corrida -- no tiene el manejo fino de "preservar semana vieja si esta
+    corrida no trajo dato" que sí tiene rebuild_weekly_monthly. Alcanza porque
+    cada corrida trae el rango completo pedido; si en el futuro se corre con
+    rangos parciales día por día, revisar este merge con el mismo cuidado.
+    """
+    mp = master.setdefault("medios_pago", {})
+    por_periodo = mp.setdefault("por_periodo", {})
+    por_periodo[periodo] = por_periodo.get(periodo, {})
+    semanal = mp.setdefault("semanal", {})  # {branch: {semana_label: {categoria: monto}}}
+
+    for branch, dailymap in daily_cuenta_by_branch.items():
+        if not dailymap:
+            continue  # None (sin dato esta corrida) o {} (sin filas) -> no tocar lo que ya había
+        tot_branch = defaultdict(float)
+        sem_branch = semanal.setdefault(branch, {})
+        semanas_tocadas = defaultdict(lambda: defaultdict(float))
+        for d, cats in dailymap.items():
+            wl, _ = _semana_label(d)
+            for cat, monto in cats.items():
+                semanas_tocadas[wl][cat] += monto
+                tot_branch[cat] += monto
+        for wl, cats in semanas_tocadas.items():
+            sem_branch[wl] = {k: round(v) for k, v in cats.items()}
+        por_periodo[periodo][branch] = {k: round(v) for k, v in tot_branch.items()}
+
+
+def chequear_reconciliacion_medios_pago(master, periodo, umbral_pct=2.0):
+    """Compara la suma de medios_pago por sucursal contra branch_tot (ya
+    calculado desde restoVentasComanda). Si el desvío supera umbral_pct, queda
+    marcado ok:false para que build.py lo muestre como alerta, en vez de
+    confiar en el número sin chequear."""
+    bt = master.get("branch_tot", {}).get(periodo, {})
+    mp = master.get("medios_pago", {}).get("por_periodo", {}).get(periodo, {})
+    out = {}
+    for branch, cats in mp.items():
+        total_mp = sum(cats.values())
+        total_comanda = bt.get(branch)
+        if not total_comanda:
+            continue
+        gap_pct = round((total_mp - total_comanda) / total_comanda * 100, 2)
+        out[branch] = {
+            "total_medios_pago": round(total_mp),
+            "total_comanda": round(total_comanda),
+            "gap_pct": gap_pct,
+            "ok": abs(gap_pct) <= umbral_pct,
+        }
+    rec = master.setdefault("medios_pago", {}).setdefault("reconciliacion", {})
+    rec[periodo] = out
+
 
 def audit(branch, A, R):
     g = A["gross"]
@@ -713,6 +836,7 @@ def main():
 
     print(f"\n=== Ingesta {P}  ({args.desde} → {args.hasta})  ·  {len(BRANCHES)} sucursales ===")
     A_all={};R_all={};D_all={};tot={};py_all={};daily_all={};daily_desc_all={};daily_cupon_py_all={};sc_all={}
+    daily_cuenta_all={}
     all_ok = True
     fallback_branches = []    # sucursales que usaron valor previo por SIN DATOS esta corrida
     api_error_branches = []   # sucursales cuyo fallo fue error de red/API (no "sin ventas" legítimo)
@@ -722,7 +846,8 @@ def main():
     now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
     for cliente, suc, branch, grupo in BRANCHES:
-        rows = api_call(cliente, suc, args.desde, args.hasta, email, pw)
+        rows = api_call(API_URL, cliente, suc, args.desde, args.hasta, email, pw)
+        daily_cuenta_all[branch] = fetch_medios_pago(cliente, suc, branch, grupo, args.desde, args.hasta, email, pw)
         if rows is None:
             api_error_branches.append(branch)
         if not rows:
@@ -853,6 +978,8 @@ def main():
     rebuild_especial2026(master, P, args)
     rebuild_mundiales(master, P, args)
     rebuild_weekly_monthly(master, daily_all, daily_desc_all, args)
+    rebuild_medios_pago(master, P, daily_cuenta_all)
+    chequear_reconciliacion_medios_pago(master, P)
 
     # --- Sucursales con dato viejo (más de STALE_HOURS sin una corrida fresca ACEPTADA
     # —ni SIN DATOS ni CUARENTENA cuentan como fresca—), calculado sobre el estado YA
@@ -891,7 +1018,7 @@ def main():
     print(f"\n  master.json actualizado · red ${grp['Total']:,.0f} "
           f"(SRL ${grp['SRL']:,.0f} · Franq ${grp['Franquicias']:,.0f})")
     print(f"  Secciones actualizadas: analytics · rankings · descdet · "
-          f"peya · especial2026 · mundiales · weekly · monthly")
+          f"peya · especial2026 · mundiales · weekly · monthly · medios_pago")
     if fallback_branches:
         print(f"  ⚠ ATENCIÓN: {len(fallback_branches)} sucursal(es) fallaron esta corrida y se "
               f"conservó su último valor conocido en vez de ponerlas en cero: "
