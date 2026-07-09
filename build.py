@@ -749,7 +749,7 @@ RENDER.fiscal=()=>{const brs=selBrs(fFisc);const c=mergeDict(brs,'comprobante');
 // ===========================================================================
 const MP_CATS=['Efectivo','LENO+ (canal propio)','MercadoPago/QR','Tarjeta (PayWay)','Nave','PedidosYa','Sin clasificar'];
 const MP_PAL={'Efectivo':'#E2001A','LENO+ (canal propio)':'#8b5cf6','MercadoPago/QR':'#10b981','Tarjeta (PayWay)':'#2563eb','Nave':'#0ea5e9','PedidosYa':'#FA0050','Sin clasificar':'#9aa1b2'};
-const MP_NA_SRL=['Tarjeta (PayWay)','Nave'];
+const MP_NA_SRL=['Tarjeta (PayWay)'];
 const MP_NA_FR=['LENO+ (canal propio)'];
 const MP_UMBRAL_EFVO_ALTO=15;   // pts sobre el promedio de red -> riesgo de caja física. Sin calibrar con datos reales aún.
 const MP_UMBRAL_NOEFVO_ALTO=70; // % fijo -> riesgo de venta en efectivo no declarada / concentración digital. Sin calibrar aún.
