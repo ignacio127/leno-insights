@@ -254,7 +254,7 @@ function sumSub(brs,field,sub){let s=0;brs.forEach(b=>{const a=DATA.analytics[PE
 function brOpts(cur){return '<option value="ALL">Todas</option>'+pbranches().map(b=>'<option value="'+b+'"'+(cur===b?' selected':'')+'>'+b+'</option>').join('');}
 function selBrs(v){return (v==='ALL'||pbranches().indexOf(v)<0)?pbranches():[v];}
 
-const SECTIONS=[['resumen','Resumen'],['semanal','Comparativa Semanal'],['mensual','Comparativa Mensual'],['ranking','Ranking de Productos'],['categorias','Categorías'],['fiscal','Facturación'],['descuentos','Descuentos'],['ventas_dia','Ventas por Día'],['turnos','Ventas por Turno'],['canales','Canales & Delivery'],['peya','Pedidos Ya - Campañas'],['envios','Envíos'],['mesa','Servicios de Mesa'],['especial2026','Especial 2026'],['burgerday','LENO Buckets'],['burgermes','Burger del Mes'],['mundiales','Nos Fuimos Mundiales']];
+const SECTIONS=[['resumen','Resumen'],['semanal','Comparativa Semanal'],['mensual','Comparativa Mensual'],['ranking','Ranking de Productos'],['categorias','Categorías'],['fiscal','Facturación'],['mediospago','Medios de Pago'],['descuentos','Descuentos'],['ventas_dia','Ventas por Día'],['turnos','Ventas por Turno'],['canales','Canales & Delivery'],['peya','Pedidos Ya - Campañas'],['envios','Envíos'],['mesa','Servicios de Mesa'],['especial2026','Especial 2026'],['burgerday','LENO Buckets'],['burgermes','Burger del Mes'],['mundiales','Nos Fuimos Mundiales']];
 const NONPERIOD=['semanal','mensual'];
 const HIDETABS=['semanal','mensual','burgermes'];
 const GROUPS={resumen:'Panorama',ranking:'Comercial',canales:'Plataformas',especial2026:'Promociones'};
@@ -265,14 +265,14 @@ const SELFSCOPE={
   especial2026:{chip:()=>{const e=(DATA.especial2026||{})[PERIOD];return e?e.rango:'—';},scope:()=>{const e=(DATA.especial2026||{})[PERIOD];return e?'Promo Especial 2026 · '+e.rango+' · en curso':'Sin datos para este período';}}
 };
 const nav=document.getElementById('nav');
-const ICONS={resumen:'📊',semanal:'📈',mensual:'🗓️',ranking:'🏅',categorias:'🗂️',fiscal:'🧾',descuentos:'🏷️',ventas_dia:'📅',turnos:'🕑',canales:'🛰️',peya:'🛵',envios:'📦',mesa:'🍽️',especial2026:'⭐',burgerday:'🪣',burgermes:'🍔',mundiales:'⚽'};
+const ICONS={resumen:'📊',semanal:'📈',mensual:'🗓️',ranking:'🏅',categorias:'🗂️',fiscal:'🧾',mediospago:'💳',descuentos:'🏷️',ventas_dia:'📅',turnos:'🕑',canales:'🛰️',peya:'🛵',envios:'📦',mesa:'🍽️',especial2026:'⭐',burgerday:'🪣',burgermes:'🍔',mundiales:'⚽'};
 SECTIONS.forEach(([id,t])=>{if(GROUPS[id]){const g=document.createElement('div');g.className='navgrp';g.textContent=GROUPS[id];nav.appendChild(g);}const a=document.createElement('div');a.className='navi flex items-center gap-2 px-5 py-2.5';a.dataset.id=id;a.innerHTML='<span class="nic">'+(ICONS[id]||'•')+'</span><span>'+t+'</span>';a.onclick=()=>go(id);nav.appendChild(a);});
 const content=document.getElementById('content');
 SECTIONS.forEach(([id])=>{const d=document.createElement('section');d.className='sec';d.id='sec-'+id;content.appendChild(d);});
 // period tabs
 const ptabs=document.getElementById('periodTabs');
 DATA.periods.forEach(p=>{const b=document.createElement('div');b.className='pbtn';b.dataset.p=p;b.textContent=DATA.period_meta[p].label;b.onclick=()=>setPeriod(p);ptabs.appendChild(b);});
-function setPeriod(p){PERIOD=p;fTurno='ALL';fFisc='ALL';fDesc='ALL';fEnvios='ALL';fMesa='ALL';fCanal='ALL';rkScope='ALL';rkCat='ALL';
+function setPeriod(p){PERIOD=p;fTurno='ALL';fFisc='ALL';fMediosPago='ALL';fDesc='ALL';fEnvios='ALL';fMesa='ALL';fCanal='ALL';rkScope='ALL';rkCat='ALL';
  document.querySelectorAll('#periodTabs .pbtn').forEach(b=>{const on=b.dataset.p===p;b.style.background=on?'#E2001A':'transparent';b.style.color=on?'#fff':'#71757f';});
  document.getElementById('periodHint').textContent=DATA.period_meta[p].parcial?'⚠ Datos parciales (en curso, se actualizan)':'Mes completo';
  const cur=[...document.querySelectorAll('.navi')].find(n=>n.classList.contains('active'));go(cur?cur.dataset.id:'resumen');}
@@ -738,6 +738,145 @@ RENDER.fiscal=()=>{const brs=selBrs(fFisc);const c=mergeDict(brs,'comprobante');
   scDiv.innerHTML='';
  }
 };
+
+// ===========================================================================
+// MEDIOS DE PAGO (restoVentasCuenta) — categorías confirmadas con datos reales.
+// SRL: CAJA+LENO+ EFECTIVO->Efectivo, LENO+ A COBRAR->'LENO+ (canal propio)',
+//      MERCADOPAGO A COBRAR->MercadoPago/QR, PEDIDOS YA A COBRAR->PedidosYa.
+// Franquicias: Caja->Efectivo, Caja Mercadopago->MercadoPago/QR,
+//      Caja PayWay->'Tarjeta (PayWay)', Caja Nave->Nave, Pedidos Ya a cobrar->PedidosYa.
+// El mapeo cuenta_id->categoría vive en ingestor.py; acá solo se lee el resultado.
+// ===========================================================================
+const MP_CATS=['Efectivo','LENO+ (canal propio)','MercadoPago/QR','Tarjeta (PayWay)','Nave','PedidosYa','Sin clasificar'];
+const MP_PAL={'Efectivo':'#E2001A','LENO+ (canal propio)':'#8b5cf6','MercadoPago/QR':'#10b981','Tarjeta (PayWay)':'#2563eb','Nave':'#0ea5e9','PedidosYa':'#FA0050','Sin clasificar':'#9aa1b2'};
+const MP_NA_SRL=['Tarjeta (PayWay)','Nave'];
+const MP_NA_FR=['LENO+ (canal propio)'];
+const MP_UMBRAL_EFVO_ALTO=15;   // pts sobre el promedio de red -> riesgo de caja física. Sin calibrar con datos reales aún.
+const MP_UMBRAL_NOEFVO_ALTO=70; // % fijo -> riesgo de venta en efectivo no declarada / concentración digital. Sin calibrar aún.
+function mpGrupo(b){return SRL.indexOf(b)>=0?'SRL':'FR';}
+function mpNA(b){return mpGrupo(b)==='SRL'?MP_NA_SRL:MP_NA_FR;}
+function mpTotal(cats){return Object.values(cats||{}).reduce((s,v)=>s+v,0);}
+function mpEfvo(cats){return (cats&&cats['Efectivo'])||0;}
+function mpPctEfvo(cats){const t=mpTotal(cats);return t?mpEfvo(cats)/t*100:0;}
+function mpSemanasDePeriodo(branch,periodo){
+ const mn=MESES_ORDEN.indexOf(periodo)+1;
+ const sem=((DATA.medios_pago||{}).semanal||{})[branch]||{};
+ return Object.keys(sem).filter(wl=>parseInt(wl.split(' al ')[0].split('.')[1],10)===mn)
+  .sort((a,b)=>{const da=a.split(' al ')[0].split('.'),db=b.split(' al ')[0].split('.');return (parseInt(da[1])-parseInt(db[1]))||(parseInt(da[0])-parseInt(db[0]));})
+  .map(wl=>({semana:wl,...sem[wl]}));
+}
+function mpWeeklyScope(periodo,brs){
+ const labels=[];const seen=new Set();
+ brs.forEach(b=>mpSemanasDePeriodo(b,periodo).forEach(w=>{if(!seen.has(w.semana)){seen.add(w.semana);labels.push(w.semana);}}));
+ labels.sort((a,b)=>{const da=a.split(' al ')[0].split('.'),db=b.split(' al ')[0].split('.');return (parseInt(da[1])-parseInt(db[1]))||(parseInt(da[0])-parseInt(db[0]));});
+ return labels.map(wl=>{
+  const row={semana:wl};
+  brs.forEach(b=>{
+   const sem=((DATA.medios_pago||{}).semanal||{})[b]||{};
+   const cats=sem[wl];
+   if(cats)Object.entries(cats).forEach(([k,v])=>row[k]=(row[k]||0)+v);
+  });
+  return row;
+ });
+}
+let fMediosPago='ALL';
+RENDER.mediospago=()=>{
+ const el=document.getElementById('sec-mediospago');
+ const mp=DATA.medios_pago;
+ if(!mp){el.innerHTML='<div class="card p-8 text-center" style="color:var(--mut)">Todavía no hay datos de medios de pago cargados para este período.</div>';return;}
+ const brs=selBrs(fMediosPago);
+ const porPeriodo=(mp.por_periodo||{})[PERIOD]||{};
+ const totalCats={};brs.forEach(b=>{const c=porPeriodo[b];if(c)Object.entries(c).forEach(([k,v])=>totalCats[k]=(totalCats[k]||0)+v);});
+ const totalRed=mpTotal(totalCats);
+ const pctEfvo=mpPctEfvo(totalCats);
+ const pctNoEfvo=100-pctEfvo;
+ const sinClas=totalCats['Sin clasificar']||0;
+ const catConDatos=MP_CATS.filter(c=>(totalCats[c]||0)>0);
+
+ const wk=mpWeeklyScope(PERIOD,brs);
+ const deltaEfvo=wk.length>1?mpPctEfvo(wk[wk.length-1])-mpPctEfvo(wk[0]):0;
+
+ // Alerta A: efectivo alto vs. promedio de red (sobre el período completo, TODAS las sucursales)
+ const todasBr=pbranches();
+ const totalPorBranch=b=>mpTotal(porPeriodo[b]);
+ const efvoPorBranch=b=>mpEfvo(porPeriodo[b]);
+ const totalRedFull=todasBr.reduce((s,b)=>s+totalPorBranch(b),0)||1;
+ const efvoRedFull=todasBr.reduce((s,b)=>s+efvoPorBranch(b),0);
+ const pctEfvoRedFull=efvoRedFull/totalRedFull*100;
+ const anomalasA=todasBr.filter(b=>porPeriodo[b]&&(efvoPorBranch(b)/(totalPorBranch(b)||1)*100)-pctEfvoRedFull>MP_UMBRAL_EFVO_ALTO)
+  .filter(b=>fMediosPago==='ALL'||b===fMediosPago)
+  .map(b=>({b,pct:efvoPorBranch(b)/(totalPorBranch(b)||1)*100}));
+
+ // Alerta B: pagos digitales >=70% por sucursal-semana, respeta el filtro
+ const anomalasB=[];
+ brs.forEach(b=>{mpSemanasDePeriodo(b,PERIOD).forEach(row=>{const pne=100-mpPctEfvo(row);if(pne>=MP_UMBRAL_NOEFVO_ALTO)anomalasB.push({b,semana:row.semana,pne});});});
+
+ // Reconciliación vs. branch_tot (restoVentasComanda) — calidad de dato, no opinión
+ const rec=((mp.reconciliacion||{})[PERIOD])||{};
+ const recFallas=Object.entries(rec).filter(([b,v])=>!v.ok&&(fMediosPago==='ALL'||b===fMediosPago));
+
+ const kpis=kpi('Facturación (medios de pago)',Fm(totalRed),(fMediosPago==='ALL'?pbranches().length+' sucursales':fMediosPago)+' · '+DATA.period_meta[PERIOD].label,undefined,'#E2001A')+
+  kpi('% Efectivo',pctEfvo.toFixed(1)+'%',wk.length>1?'1ra semana → última':'sin semanas suficientes',wk.length>1?deltaEfvo:undefined,(pctEfvo>40?'#e11d48':'#16a34a'))+
+  kpi('% Pagos Digitales',pctNoEfvo.toFixed(1)+'%',pctNoEfvo>=MP_UMBRAL_NOEFVO_ALTO?'⚠ sobre umbral 70%':'bajo umbral 70%',undefined,(pctNoEfvo>=MP_UMBRAL_NOEFVO_ALTO?'#e11d48':'#16a34a'))+
+  kpi('Sin clasificar',Fm(sinClas),sinClas>0?'⚠ revisar mapeo de cuentas':'todo mapeado OK',undefined,(sinClas>0?'#d97706':'#16a34a'));
+
+ const kpisCat=catConDatos.filter(c=>c!=='Sin clasificar').map(c=>
+  kpi(c,Fm(totalCats[c]),totalRed?(totalCats[c]/totalRed*100).toFixed(1)+'% del total':'—',undefined,MP_PAL[c])
+ ).join('');
+
+ let recCard='';
+ if(recFallas.length){
+  recCard='<div class="card p-5 mt-4" style="border-left:3px solid #e11d48"><div class="font-semibold mb-3">⚠ Reconciliación: Medios de Pago no cierra contra Facturación</div><div class="grid md:grid-cols-2 gap-3 text-[13px]">'+
+   recFallas.map(([b,v])=>insight('#e11d48',b,'Medios de pago suma '+F(v.total_medios_pago)+' vs. '+F(v.total_comanda)+' de Facturación · desvío '+v.gap_pct+'%. Revisar mapeo de cuentas o comandas sin pago registrado.')).join('')+
+   '</div></div>';
+ }
+ let alertA='';
+ if(anomalasA.length){
+  alertA='<div class="card p-5 mt-4" style="border-left:3px solid #e11d48"><div class="font-semibold mb-3">🔔 Efectivo alto vs. promedio de red (posible riesgo de caja física)</div><div class="grid md:grid-cols-2 gap-3 text-[13px]">'+
+   anomalasA.map(a=>insight('#e11d48',a.b,'<b>'+a.pct.toFixed(0)+'% efectivo</b> en '+DATA.period_meta[PERIOD].label+', '+(a.pct-pctEfvoRedFull).toFixed(0)+' pts sobre el promedio de red ('+pctEfvoRedFull.toFixed(0)+'%). Candidato a arqueo sorpresivo.')).join('')+
+   '</div></div>';
+ }
+ let alertB='';
+ if(anomalasB.length){
+  alertB='<div class="card p-5 mt-4" style="border-left:3px solid #d97706"><div class="font-semibold mb-3">🔔 Pagos Digitales ≥ 70% (posible venta en efectivo no declarada, o concentración de riesgo en plataformas)</div><div class="grid md:grid-cols-2 gap-3 text-[13px]">'+
+   anomalasB.map(a=>insight('#d97706',a.b+' · semana '+a.semana,'<b>'+a.pne.toFixed(0)+'% pagos digitales</b> esa semana.')).join('')+
+   '</div></div>';
+ }
+
+ const tabla='<div class="card p-5 mt-4"><div class="font-semibold mb-3">Detalle semanal · '+(fMediosPago==='ALL'?'Total red':fMediosPago)+' · '+DATA.period_meta[PERIOD].label+'</div><div style="overflow-x:auto"><table class="text-sm"><thead><tr class="text-[12px] text-left" style="color:var(--mut)"><th class="py-2 pr-3">Semana</th>'+MP_CATS.map(c=>'<th class="py-2 px-3 text-right">'+c+'</th>').join('')+'<th class="py-2 px-3 text-right">Total</th><th class="py-2 px-3 text-right">%Efvo</th><th class="py-2 px-3 text-right">%Digital</th></tr></thead><tbody>'+
+  (wk.length?wk.map(row=>{
+   const t=mpTotal(row);const pe=mpPctEfvo(row);const pne=100-pe;
+   const alertaB=pne>=MP_UMBRAL_NOEFVO_ALTO;
+   const nas=fMediosPago==='ALL'?[]:mpNA(fMediosPago);
+   return '<tr style="border-top:1px solid var(--line)"><td class="py-2 pr-3 font-medium">'+row.semana+'</td>'+
+    MP_CATS.map(c=>{
+     if(nas.indexOf(c)>=0)return '<td class="py-2 px-3 text-right" style="color:var(--mut2)">—</td>';
+     const v=row[c]||0;return '<td class="py-2 px-3 text-right" style="'+(c==='Sin clasificar'&&v>0?'color:#d97706;font-weight:700':'')+'">'+(v>0?F(v):'—')+'</td>';
+    }).join('')+
+    '<td class="py-2 px-3 text-right font-semibold">'+F(t)+'</td>'+
+    '<td class="py-2 px-3 text-right">'+pe.toFixed(1)+'%</td>'+
+    '<td class="py-2 px-3 text-right"><span class="badge" style="background:'+(alertaB?'#fef3c7':'#dcfce7')+';color:'+(alertaB?'#d97706':'#16a34a')+'">'+pne.toFixed(1)+'%</span></td></tr>';
+  }).join(''):'<tr><td colspan="'+(MP_CATS.length+3)+'" class="py-4 text-center" style="color:var(--mut)">Sin semanas cargadas todavía para este período.</td></tr>')+
+  '</tbody></table></div>'+note('SRL no opera con Tarjeta (PayWay) ni Nave; Franquicias no discriminan "LENO+ (canal propio)". Esas celdas en "—" son estructurales, no datos faltantes.')+'</div>';
+
+ el.innerHTML=filterBar('fMediosPago','mediospago',fMediosPago)+
+  '<div class="grid grid-cols-1 md:grid-cols-4 gap-4">'+kpis+'</div>'+
+  '<div class="text-[12px] font-semibold mt-5 mb-2" style="color:var(--mut);letter-spacing:.04em">DESGLOSE POR MEDIO DE PAGO</div>'+
+  '<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">'+(kpisCat||'<div class="text-[13px]" style="color:var(--mut)">Sin datos todavía.</div>')+'</div>'+
+  recCard+alertA+alertB+
+  '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">'+
+   '<div class="card p-5"><div class="font-semibold mb-3">Mix semanal por categoría · '+(fMediosPago==='ALL'?'Total red':fMediosPago)+'</div><canvas id="cMPStack" height="220"></canvas></div>'+
+   '<div class="card p-5"><div class="font-semibold mb-3">% Pagos Digitales por semana <span style="color:var(--mut);font-weight:400">(línea = umbral 70%)</span></div><canvas id="cMPNoEfvo" height="220"></canvas></div>'+
+  '</div>'+tabla;
+
+ const catsChart=MP_CATS.filter(c=>wk.some(r=>(r[c]||0)>0));
+ mkChart('cMPStack',{type:'bar',data:{labels:wk.map(r=>r.semana),datasets:catsChart.map(c=>({label:c,data:wk.map(r=>r[c]||0),backgroundColor:MP_PAL[c]}))},options:{plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:10}}},tooltip:{callbacks:{label:c=>c.dataset.label+': '+Fm(c.raw)}}},scales:{x:{stacked:true,grid:{display:false}},y:{stacked:true,ticks:{callback:v=>'$'+(v/1e6).toFixed(1)+'M'},grid:{color:LINE}}}}});
+ mkChart('cMPNoEfvo',{data:{labels:wk.map(r=>r.semana),datasets:[
+   {type:'bar',label:'% Pagos Digitales',data:wk.map(r=>100-mpPctEfvo(r)),backgroundColor:wk.map(r=>(100-mpPctEfvo(r))>=MP_UMBRAL_NOEFVO_ALTO?'#e11d48':'#2563eb'),borderRadius:6},
+   {type:'line',label:'Umbral 70%',data:wk.map(()=>MP_UMBRAL_NOEFVO_ALTO),borderColor:'#e11d48',borderDash:[6,4],pointRadius:0,borderWidth:1.5}
+  ]},options:{plugins:{legend:{display:false}},scales:{y:{min:0,max:100,ticks:{callback:v=>v+'%'},grid:{color:LINE}},x:{grid:{display:false}}}}});
+};
+
 const DFAM=['Comercial/Cupones','Convenios comerciales','Convenio institucional','Promociones/Fidelización','Socios','Autorización Socios','Franquicias','Voucher','Gift Card','Interno/Comps','Ajuste sin concepto'];
 const DFCOL={'Comercial/Cupones':'#E2001A','Convenios comerciales':'#f59e0b','Convenio institucional':'#d97706','Promociones/Fidelización':'#8b5cf6','Socios':'#2563eb','Autorización Socios':'#0ea5e9','Franquicias':'#14b8a6','Voucher':'#ec4899','Gift Card':'#64748b','Interno/Comps':'#ef4444','Ajuste sin concepto':'#94a3b8'};
 const DMACRO={'Comercial/Cupones':'cli','Convenios comerciales':'cli','Convenio institucional':'cli','Promociones/Fidelización':'cli','Socios':'cli','Voucher':'cli','Autorización Socios':'int','Franquicias':'int','Interno/Comps':'int','Gift Card':'otr','Ajuste sin concepto':'otr'};
