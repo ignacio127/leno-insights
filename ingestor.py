@@ -402,6 +402,7 @@ CUENTA_MAP_SRL = {
     "LENO+ A COBRAR": "LENO+ (canal propio)",
     "MERCADOPAGO A COBRAR": "MercadoPago/QR",
     "PEDIDOS YA A COBRAR": "PedidosYa",
+    "NAVE A COBRAR": "Nave",  # Aconquija (SRL) sí opera con Nave; se asumía Franquicia-only (sin_clasificar_detalle Junio: $879.200)
 }
 CUENTA_MAP_FRANQ = {
     "CAJA": "Efectivo",
