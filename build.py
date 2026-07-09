@@ -755,7 +755,7 @@ const MP_UMBRAL_EFVO_ALTO=15;   // pts sobre el promedio de red -> riesgo de caj
 const MP_UMBRAL_NOEFVO_ALTO=70; // % fijo -> riesgo de venta en efectivo no declarada / concentración digital. Sin calibrar aún.
 function mpGrupo(b){return SRL.indexOf(b)>=0?'SRL':'FR';}
 function mpNA(b){return mpGrupo(b)==='SRL'?MP_NA_SRL:MP_NA_FR;}
-function mpTotal(cats){return Object.values(cats||{}).reduce((s,v)=>s+v,0);}
+function mpTotal(cats){return MP_CATS.reduce((s,c)=>s+((cats&&cats[c])||0),0);}
 function mpEfvo(cats){return (cats&&cats['Efectivo'])||0;}
 function mpPctEfvo(cats){const t=mpTotal(cats);return t?mpEfvo(cats)/t*100:0;}
 function mpSemanasDePeriodo(branch,periodo){
