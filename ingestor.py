@@ -144,6 +144,16 @@ def transform(rows, prodcat):
         if not a or "PRUEBA" in a.upper(): continue
         v = num(r.get("total")); c = num(r.get("cantidad"))
         if v == 0: continue
+        # Auditoria 23/07/2026 (Ramiro): comanda_tot tiene que ser NETO (bruto +
+        # descuento) para poder usarse como "monto real" contra medios_pago (lo
+        # que el cliente efectivamente pago, que ya es neto). Si solo se acumula
+        # en la rama positiva (bruto), las comandas con lote+descuento se
+        # corrigen contra el bruto y sobreestiman por el monto exacto del
+        # descuento -- confirmado con datos reales, Peron-Junio: 120 comandas,
+        # $766.713, exactamente el gap residual que quedaba tras el fix de v3/v4.
+        cn = str(r.get("comprobante_numero") or "").strip()
+        if cn:
+            comanda_tot[cn] += v
         fecha_raw = (r.get("fecha") or "").strip()
         if v < 0:
             ing_d = (r.get("ingreso") or "").strip()
@@ -169,10 +179,8 @@ def transform(rows, prodcat):
         ing = (r.get("ingreso") or "").strip()
         tipo_comp = ing.split()[0] if ing else "S/C"
         comp[tipo_comp] += v
-        cn = str(r.get("comprobante_numero") or "").strip()
         if cn:
             comandas.add(cn)
-            comanda_tot[cn] += v
         # S/C drill-down: acumular ítems por comanda sin comprobante
         if not ing and cn:
             fecha_raw = (r.get("fecha") or "").strip()
