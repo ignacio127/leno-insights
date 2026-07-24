@@ -359,7 +359,28 @@ RENDER.resumen=()=>{
    const avisoPocosDias=pocosDias?('<div class="text-[12px] mt-3 px-4 py-2.5 rounded-lg flex gap-2" style="background:#fef2f2;border:1px solid #fecaca;color:#991b1b">⚠️ <span><b>'+PERIOD+' lleva solo '+diasCur+' día'+(diasCur===1?'':'s')+' transcurrido'+(diasCur===1?'':'s')+'.</b> Comparar el promedio diario de un mes recién empezado (y todavía en curso) contra '+prev+' —ya cerrado— va a mostrar una caída más grande de la real. Esperá a tener al menos 5–7 días para leer esta tabla con confianza.</span></div>'):'';
    cmp='<div class="card p-5 mt-4"><div class="font-semibold mb-1">📊 Comparación vs mes anterior · '+prev+'</div><div class="text-[12px] mb-3" style="color:var(--mut)">Base comparable: '+scopeLabel+'. Todas las cifras son <b>por día</b> (no por mes) para poder comparar meses parciales con meses completos.</div><div style="overflow-x:auto"><table class="text-sm w-full"><thead><tr class="text-[12px] text-left" style="color:var(--mut)"><th class="py-2 pr-3">Métrica ('+(usaTotal?'Total':'SRL')+') · por día</th><th class="py-2 px-3 text-right">'+PERIOD+'</th><th class="py-2 px-3 text-right">'+prev+'</th><th class="py-2 px-3 text-right">Δ</th></tr></thead><tbody>'+
      row('Facturación bruta / día',cu.brutoDia,pr.brutoDia,Fm)+row('Facturación neta / día',cu.netoDia,pr.netoDia,Fm)+row('Ticket promedio',cu.ticket,pr.ticket,F)+row('Descuentos % s/ bruto',cu.descPct,pr.descPct,v=>v.toFixed(1)+'%',true)+
-     '</tbody></table></div>'+avisoPocosDias+(usaTotal?'':note('Se compara solo SRL porque '+prev+' no tiene datos de Franquicias cargados. El total bruto de arriba sí incluye todas las sucursales del período.'))+'</div>';}
+     '</tbody></table></div>'+avisoPocosDias+(usaTotal?'':note('Se compara solo SRL porque '+prev+' no tiene datos de Franquicias cargados. El total bruto de arriba sí incluye todas las sucursales del período.'))+'</div>';
+
+   // Alerta de volumen: comandas/día cae mientras el ticket compensa (no se ve en
+   // la venta total). Se salta si el período recién empezó (mismo guardrail que
+   // avisoPocosDias) para no marcar como caída algo que es solo un mes incompleto.
+   if(!pocosDias){
+    const UMBRAL_VOL_CAIDA=10;
+    const diasPrev=DATA.period_meta[prev].dias;
+    const filasVol=common.map(b=>{
+     const aCur=DATA.analytics[PERIOD][b],aPrev=DATA.analytics[prev][b];
+     if(!aCur||!aPrev||!aPrev.comandas) return null;
+     const cCur=aCur.comandas/diasCur,cPrev=aPrev.comandas/diasPrev;
+     const dCmd=(cCur/cPrev-1)*100,dTk=aPrev.ticket?(aCur.ticket/aPrev.ticket-1)*100:0;
+     return {b,cCur,cPrev,dCmd,dTk,tkCur:aCur.ticket,tkPrev:aPrev.ticket};
+    }).filter(x=>x&&x.dCmd<=-UMBRAL_VOL_CAIDA);
+    if(filasVol.length){
+     cmp+='<div class="card p-5 mt-4" style="border-left:3px solid #e11d48"><div class="font-semibold mb-3">🔔 Volumen cae mientras el ticket compensa</div><div class="grid md:grid-cols-2 gap-3 text-[13px]">'+
+      filasVol.map(x=>insight('#e11d48',x.b,'Comandas/día: <b>'+x.cPrev.toFixed(1)+' → '+x.cCur.toFixed(1)+'</b> ('+x.dCmd.toFixed(1)+'%) · Ticket: <b>'+F(x.tkPrev)+' → '+F(x.tkCur)+'</b> ('+(x.dTk>=0?'+':'')+x.dTk.toFixed(1)+'%)')).join('')+
+      '</div></div>';
+    }
+   }
+  }
  const el=document.getElementById('sec-resumen');
  el.innerHTML='<div class="grid grid-cols-1 md:grid-cols-4 gap-4">'+kpis+'</div>'+rr+strip+dqCard+cmp+
   '<div class="card p-5 mt-4"><div class="font-semibold mb-3">🔔 Alertas & Insights</div><div class="grid md:grid-cols-2 gap-3 text-[13px]">'+
@@ -523,8 +544,32 @@ RENDER.canales=()=>{const brs=selBrs(fCanal);const raw=mergeDict(brs,'canal');co
  Object.entries(raw).forEach(([k,v])=>{let nk=k;if(k==='TUCAN'||k==='DELIVERY')nk='LENO+';else if(k==='PEDIDOS YA')nk='PedidosYa';else if(k==='TAKEAWAY')nk='Take Away';else if(k==='Salón/Mostrador')nk='Salón / Mostrador';c[nk]=(c[nk]||0)+v;});
  const arr=Object.entries(c).map(([k,v])=>({k,v,peya:k==='PedidosYa'})).sort((a,b)=>b.v-a.v);const tot=arr.reduce((s,x)=>s+x.v,0)||1;const mx=arr.length?arr[0].v:1;const lenoMas=c['LENO+']||0;
  const el=document.getElementById('sec-canales');
+
+ // Ticket promedio: PedidosYa vs. ticket general del scope seleccionado (mide
+ // canibalizacion, no solo participacion en $). "General" es blended (incluye
+ // PY), no es un ticket "presencial puro" -- no tenemos comandas discriminadas
+ // por canal para calcular eso.
+ const peyaP=(DATA.peya||{})[PERIOD];
+ let canalTicketCard='';
+ if(peyaP){
+  const tkPY=fCanal==='ALL'?(peyaP.total||{}).ticket:(((peyaP.branches||{})[fCanal]||{}).ticket);
+  const grossGen=brs.reduce((s,b)=>s+(((DATA.analytics[PERIOD]||{})[b]||{}).gross||0),0);
+  const cmdGen=brs.reduce((s,b)=>s+(((DATA.analytics[PERIOD]||{})[b]||{}).comandas||0),0);
+  const tkGen=cmdGen?Math.round(grossGen/cmdGen):0;
+  if(tkPY&&tkGen){
+   const gapPct=(tkPY/tkGen-1)*100;
+   const hMax=90,hPY=Math.round(Math.max(20,tkPY/Math.max(tkPY,tkGen)*hMax)),hGen=Math.round(Math.max(20,tkGen/Math.max(tkPY,tkGen)*hMax));
+   canalTicketCard='<div class="card p-5 mt-4"><div class="font-semibold mb-3">Ticket promedio: PedidosYa vs. general del scope</div>'+
+    '<div class="flex items-end gap-6" style="height:110px">'+
+    '<div class="flex-1 flex flex-col items-center gap-1"><div class="font-bold text-[13px]" style="color:#FA0050">'+F(tkPY)+'</div><div style="width:100%;background:#FA0050;border-radius:6px 6px 0 0;height:'+hPY+'px"></div><div class="text-[11px]" style="color:var(--mut)">PedidosYa</div></div>'+
+    '<div class="flex-1 flex flex-col items-center gap-1"><div class="font-bold text-[13px]">'+F(tkGen)+'</div><div style="width:100%;background:#4f46e5;border-radius:6px 6px 0 0;height:'+hGen+'px"></div><div class="text-[11px]" style="color:var(--mut)">General (todos los canales)</div></div>'+
+    '</div><div class="text-[12px] mt-3" style="color:var(--mut)">PedidosYa '+Math.abs(gapPct).toFixed(0)+'% '+(gapPct<0?'más bajo':'más alto')+' que el ticket general del scope seleccionado.</div></div>';
+  }
+ }
+
  el.innerHTML=filterBar('fCanal','canales',fCanal)+'<div class="grid grid-cols-1 lg:grid-cols-3 gap-4"><div class="card p-5 lg:col-span-2"><div class="font-semibold mb-4">Ventas por canal</div>'+arr.map((x,i)=>'<div class="mb-4"><div class="flex justify-between text-sm mb-1"><span class="flex items-center gap-2">'+(x.peya?'<img src="'+IMG.peya+'" class="w-4 h-4 rounded"/>':'')+x.k+'</span><span class="font-semibold">'+Fm(x.v)+' <span style="color:var(--mut)">· '+(x.v/tot*100).toFixed(1)+'%</span></span></div><div class="h-3 rounded-full" style="background:#f0f1f4"><div class="h-full rounded-full" style="width:'+(x.v/mx*100)+'%;background:'+(x.peya?'#FA0050':PAL[i%PAL.length])+'"></div></div></div>').join('')+'</div>'+
   '<div class="flex flex-col gap-4"><div class="card p-5"><div class="font-semibold mb-1" style="color:#FA0050">PedidosYa</div><div class="text-3xl font-bold" style="color:#FA0050">'+((c['PedidosYa']||0)/tot*100).toFixed(1)+'%</div><div class="text-sm mt-1" style="color:var(--mut)">'+Fm(c['PedidosYa']||0)+'</div></div><div class="card p-5"><div class="font-semibold mb-1" style="color:#E2001A">LENO+ (delivery propio)</div><div class="text-3xl font-bold" style="color:#E2001A">'+(lenoMas/tot*100).toFixed(1)+'%</div><div class="text-sm mt-1" style="color:var(--mut)">'+Fm(lenoMas)+' · sin comisión</div></div></div></div>'+
+  canalTicketCard+
   note('“LENO+” agrupa delivery propio + Tucán. '+DATA.period_meta[PERIOD].label+': '+DATA.period_meta[PERIOD].scope+'.');
 };
 function filterBar(varName,sec,cur){return '<div class="flex items-center gap-2 mb-4"><span class="text-[12px] font-semibold" style="color:var(--mut)">Sucursal:</span><select class="sel" onchange="'+varName+'=this.value;RENDER.'+sec+'()">'+brOpts(cur)+'</select></div>';}
@@ -815,6 +860,28 @@ RENDER.mediospago=()=>{
  const rec=((mp.reconciliacion||{})[PERIOD])||{};
  const recFallas=Object.entries(rec).filter(([b,v])=>!v.ok&&(fMediosPago==='ALL'||b===fMediosPago));
 
+ // Monto corregido por liquidación en lote (Nave/PedidosYa pegan el total del lote
+ // a cada comanda) — ya reconciliado a 0% de gap, esto no es plata perdida, mide
+ // exposición operativa por sucursal al patrón de liquidación en lote.
+ const dupPeriodo=((mp.duplicados_excluidos||{})[PERIOD])||{};
+ const dupBrs=Object.keys(dupPeriodo).filter(b=>fMediosPago==='ALL'||b===fMediosPago);
+ let dupCard='';
+ if(dupBrs.length){
+  const filasDup=dupBrs.map(b=>{
+   const v=dupPeriodo[b];
+   const gross=((DATA.analytics[PERIOD]||{})[b]||{}).gross||0;
+   const pct=gross?(v.monto_excluido/gross*100):0;
+   return {b,excluido:v.monto_excluido,gross,pct,n:(v.clusters||[]).length};
+  }).sort((a,b)=>b.pct-a.pct);
+  const dcolor=x=>x.pct>=100?'#e11d48':(x.pct>=50?'#d97706':'#16a34a');
+  const dbg=x=>x.pct>=100?'#fee2e2':(x.pct>=50?'#fef3c7':'#dcfce7');
+  dupCard='<div class="card p-5 mt-4" style="border-left:3px solid #d97706"><div class="font-semibold mb-1">🔁 Monto corregido por liquidación en lote · '+PERIOD+'</div>'+
+   '<div class="text-[12px] mb-3" style="color:var(--mut)">Nave/PedidosYa a veces le pegan el total de un lote a cada comanda del lote en vez de repartirlo — ya corregido contra Ventas por Comanda. No es plata perdida, mide exposición al patrón por sucursal.</div>'+
+   '<div class="grid md:grid-cols-3 gap-3 text-[13px]">'+
+   filasDup.map(x=>'<div class="rounded-lg p-3" style="background:'+dbg(x)+'"><div class="font-semibold mb-0.5" style="color:'+dcolor(x)+'">'+x.b+'</div><div class="text-xl font-bold" style="color:'+dcolor(x)+'">'+x.pct.toFixed(1)+'%</div><div style="color:var(--mut)">'+Fm(x.excluido)+' sobre gross '+Fm(x.gross)+' · '+x.n+' clusters</div></div>').join('')+
+   '</div></div>';
+ }
+
  const kpis=kpi('Facturación (medios de pago)',Fm(totalRed),(fMediosPago==='ALL'?pbranches().length+' sucursales':fMediosPago)+' · '+DATA.period_meta[PERIOD].label,undefined,'#E2001A')+
   kpi('% Efectivo',pctEfvo.toFixed(1)+'%',wk.length>1?'1ra semana → última':'sin semanas suficientes',wk.length>1?deltaEfvo:undefined,(pctEfvo>40?'#e11d48':'#16a34a'))+
   kpi('% Pagos Digitales',pctNoEfvo.toFixed(1)+'%',pctNoEfvo>=MP_UMBRAL_NOEFVO_ALTO?'⚠ sobre umbral 70%':'bajo umbral 70%',undefined,(pctNoEfvo>=MP_UMBRAL_NOEFVO_ALTO?'#e11d48':'#16a34a'))+
@@ -863,7 +930,7 @@ RENDER.mediospago=()=>{
   '<div class="grid grid-cols-1 md:grid-cols-4 gap-4">'+kpis+'</div>'+
   '<div class="text-[12px] font-semibold mt-5 mb-2" style="color:var(--mut);letter-spacing:.04em">DESGLOSE POR MEDIO DE PAGO</div>'+
   '<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">'+(kpisCat||'<div class="text-[13px]" style="color:var(--mut)">Sin datos todavía.</div>')+'</div>'+
-  recCard+alertA+alertB+
+  recCard+dupCard+alertA+alertB+
   '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">'+
    '<div class="card p-5"><div class="font-semibold mb-3">Mix semanal por categoría · '+(fMediosPago==='ALL'?'Total red':fMediosPago)+'</div><canvas id="cMPStack" height="220"></canvas></div>'+
    '<div class="card p-5"><div class="font-semibold mb-3">% Pagos Digitales por semana <span style="color:var(--mut);font-weight:400">(línea = umbral 70%)</span></div><canvas id="cMPNoEfvo" height="220"></canvas></div>'+
