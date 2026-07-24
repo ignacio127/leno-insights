@@ -254,7 +254,7 @@ function sumSub(brs,field,sub){let s=0;brs.forEach(b=>{const a=DATA.analytics[PE
 function brOpts(cur){return '<option value="ALL">Todas</option>'+pbranches().map(b=>'<option value="'+b+'"'+(cur===b?' selected':'')+'>'+b+'</option>').join('');}
 function selBrs(v){return (v==='ALL'||pbranches().indexOf(v)<0)?pbranches():[v];}
 
-const SECTIONS=[['resumen','Resumen'],['semanal','Comparativa Semanal'],['mensual','Comparativa Mensual'],['ranking','Ranking de Productos'],['categorias','Categorías'],['fiscal','Facturación'],['mediospago','Medios de Pago 🚧'],['descuentos','Descuentos'],['ventas_dia','Ventas por Día'],['turnos','Ventas por Turno'],['canales','Canales & Delivery'],['peya','Pedidos Ya - Campañas'],['envios','Envíos'],['mesa','Servicios de Mesa'],['especial2026','Especial 2026'],['burgerday','LENO Buckets'],['burgermes','Burger del Mes'],['mundiales','Nos Fuimos Mundiales']];
+const SECTIONS=[['resumen','Resumen'],['semanal','Comparativa Semanal'],['mensual','Comparativa Mensual'],['ranking','Ranking de Productos'],['categorias','Categorías'],['fiscal','Facturación'],['mediospago','Medios de Pago'],['descuentos','Descuentos'],['ventas_dia','Ventas por Día'],['turnos','Ventas por Turno'],['canales','Canales & Delivery'],['peya','Pedidos Ya - Campañas'],['envios','Envíos'],['mesa','Servicios de Mesa'],['especial2026','Especial 2026'],['burgerday','LENO Buckets'],['burgermes','Burger del Mes'],['mundiales','Nos Fuimos Mundiales']];
 const NONPERIOD=['semanal','mensual'];
 const HIDETABS=['semanal','mensual','burgermes'];
 const GROUPS={resumen:'Panorama',ranking:'Comercial',canales:'Plataformas',especial2026:'Promociones'};
@@ -859,9 +859,7 @@ RENDER.mediospago=()=>{
   }).join(''):'<tr><td colspan="'+(MP_CATS.length+3)+'" class="py-4 text-center" style="color:var(--mut)">Sin semanas cargadas todavía para este período.</td></tr>')+
   '</tbody></table></div>'+note('SRL no opera con Tarjeta (PayWay) ni Nave; Franquicias no discriminan "LENO+ (canal propio)". Esas celdas en "—" son estructurales, no datos faltantes.')+'</div>';
 
- const wipBanner='<div class="card p-4 mb-4" style="border-left:3px solid #f59e0b;background:#fffbeb"><div class="font-semibold" style="color:#92400e">🚧 En construcción — seguimos ajustando la conciliación con Facturación. Los datos abajo son reales y se actualizan, pero pueden tener revisiones en los próximos días.</div></div>';
- el.innerHTML=filterBar('fMediosPago','mediospago',fMediosPago)+wipBanner+
-  '<div style="opacity:.55;filter:grayscale(.4);pointer-events:none;user-select:none">'+
+ el.innerHTML=filterBar('fMediosPago','mediospago',fMediosPago)+
   '<div class="grid grid-cols-1 md:grid-cols-4 gap-4">'+kpis+'</div>'+
   '<div class="text-[12px] font-semibold mt-5 mb-2" style="color:var(--mut);letter-spacing:.04em">DESGLOSE POR MEDIO DE PAGO</div>'+
   '<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">'+(kpisCat||'<div class="text-[13px]" style="color:var(--mut)">Sin datos todavía.</div>')+'</div>'+
@@ -869,8 +867,7 @@ RENDER.mediospago=()=>{
   '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">'+
    '<div class="card p-5"><div class="font-semibold mb-3">Mix semanal por categoría · '+(fMediosPago==='ALL'?'Total red':fMediosPago)+'</div><canvas id="cMPStack" height="220"></canvas></div>'+
    '<div class="card p-5"><div class="font-semibold mb-3">% Pagos Digitales por semana <span style="color:var(--mut);font-weight:400">(línea = umbral 70%)</span></div><canvas id="cMPNoEfvo" height="220"></canvas></div>'+
-  '</div>'+tabla+
-  '</div>';
+  '</div>'+tabla;
 
  const catsChart=MP_CATS.filter(c=>wk.some(r=>(r[c]||0)>0));
  mkChart('cMPStack',{type:'bar',data:{labels:wk.map(r=>r.semana),datasets:catsChart.map(c=>({label:c,data:wk.map(r=>r[c]||0),backgroundColor:MP_PAL[c]}))},options:{plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:10}}},tooltip:{callbacks:{label:c=>c.dataset.label+': '+Fm(c.raw)}}},scales:{x:{stacked:true,grid:{display:false}},y:{stacked:true,ticks:{callback:v=>'$'+(v/1e6).toFixed(1)+'M'},grid:{color:LINE}}}}});
