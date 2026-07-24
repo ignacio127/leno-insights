@@ -126,6 +126,7 @@ def transform(rows, prodcat):
     comp_desc = defaultdict(float)  # descuentos por tipo de comprobante: FAB/FAX/S/C/etc.
     agg   = defaultdict(lambda: [0.0, 0.0])
     comandas = set(); gross = 0.0
+    comanda_tot = defaultdict(float)  # comanda_id (CMD-...) -> venta real sumada (auditoria 23/07/2026)
     envu = envi = smu = smi = 0.0
     # PY tracking
     py_agg  = defaultdict(lambda: [0.0, 0.0, set()])  # nombre -> [u, imp, cmds]
@@ -169,7 +170,9 @@ def transform(rows, prodcat):
         tipo_comp = ing.split()[0] if ing else "S/C"
         comp[tipo_comp] += v
         cn = str(r.get("comprobante_numero") or "").strip()
-        if cn: comandas.add(cn)
+        if cn:
+            comandas.add(cn)
+            comanda_tot[cn] += v
         # S/C drill-down: acumular ítems por comanda sin comprobante
         if not ing and cn:
             fecha_raw = (r.get("fecha") or "").strip()
@@ -232,7 +235,7 @@ def transform(rows, prodcat):
     ], key=lambda x: x["fecha"])
     return analytics, {"items": items, "gross": round(gross)}, \
            {k: round(x) for k, x in descdet.items()}, round(gross), py_data, daily, daily_desc, \
-           dict(daily_cupon_py), sc_list
+           dict(daily_cupon_py), sc_list, dict(comanda_tot)
 
 # ===========================================================================
 # REBUILD WEEKLY / MONTHLY (histórico de cadena, fuera del selector de período)
@@ -499,14 +502,26 @@ def _comprobante_num(comprobante_str):
 DUP_CLUSTER_MIN = 5
 MONTO_SOSPECHOSO_MIN = 100_000
 
+# Auditoria 23/07/2026 (Ramiro): categorias con intermediario, las unicas
+# donde puede existir un "lote" que se liquide de una y se pegue mal repartido.
+# Efectivo/LENO+/NCB-SID/Pendiente se cobran directo, sin intermediario -- no
+# tiene sustento de negocio tratarlos como posible duplicado de plataforma.
+CATEGORIAS_CON_LIQUIDACION_EN_LOTE = {"Nave", "PedidosYa", "Tarjeta (PayWay)", "MercadoPago/QR"}
 
-def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
+# Respaldo del heuristico viejo (monto+espaciado de comprobante), usado SOLO
+# cuando no tenemos comanda_tot para cruzar (ver fetch_medios_pago). Sucursales
+# confirmadas SIN patron de liquidacion en lote: ahi el caso de 2 comprobantes
+# consecutivos con igual monto es ruido de combos populares, no evidencia.
+BRANCHES_SIN_LOTE_CONFIRMADO = {"Aconquija", "Barrio Norte", "Tafi Viejo", "Barrio Sur"}
+
+
+def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw, comanda_tot=None):
     """Devuelve (dailymap, duplicados, sin_clasificar_raw) para una sucursal y
     rango de fechas.
     dailymap: {date: {categoria: monto}} | None. None = mismo criterio que
     comandas: 'sin dato esta corrida' (no se pisa lo que ya había).
     duplicados: None si no se detectó ningún cluster sospechoso, o
-    {"monto_excluido": X, "clusters": [...]} con el detalle de lo que se sacó.
+    {"monto_excluido": X, "clusters": [...]} con el detalle de lo que se corrigió.
     sin_clasificar_raw: None si no hubo nada sin mapear, o {cuenta_id_crudo:
     monto} con el TEXTO EXACTO que llegó de Gesdatta -- para poder agregarlo a
     CUENTA_MAP_SRL/CUENTA_MAP_FRANQ sin tener que pedir otra extracción manual.
@@ -521,12 +536,29 @@ def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
     tenía cuenta_id pero no matcheó ningún mapeo se sigue guardando en
     sin_clasificar_raw (y de ahí a sin_clasificar_detalle en master.json) para
     poder seguir auditando y cerrando gaps de diccionario nuevos (como pasó
-    con "NAVE A COBRAR") sin que la plata quede invisible en el medio."""
+    con "NAVE A COBRAR") sin que la plata quede invisible en el medio.
+
+    comanda_tot: {comanda_id (CMD-...): venta_real} calculado por transform()
+    sobre Ventas por Comanda de LA MISMA corrida. Auditoria 23/07/2026: el
+    campo "comprobante" de esta API (restoVentasCuenta) es el ID de comanda
+    (ej. "CMD-00002507"), NO un numero de comprobante fiscal -- confirmado
+    contra la API en vivo. Con eso podemos cruzar cada comanda de Medios de
+    Pago contra su venta real, en vez de adivinar duplicados por patron de
+    monto+espaciado. Caso real que confirmo el mecanismo: Peron, 09/07/2026,
+    PedidosYa -- 20 comandas DISTINTAS (CMD-00002562 a CMD-00002581) mostraban
+    cada una $513.590 (el mismo numero, 20 veces). Sumando la venta real de
+    esas 20 comandas (Ventas por Comanda) da EXACTAMENTE $513.590 -- o sea,
+    PedidosYa le pega el total del lote completo a cada comanda del lote, en
+    vez de repartir lo que corresponde a cada una. El heuristico viejo
+    (monto+espaciado, mas abajo) queda solo de respaldo para comandas que no
+    aparezcan en comanda_tot (p.ej. si Ventas por Comanda no trajo dato esta
+    corrida)."""
     rows = api_call(API_URL_CUENTAS, cliente, suc, desde, hasta, email, pw)
     if rows is None:
         return None, None, None
-    entradas = defaultdict(list)  # (date, categoria) -> [(monto, comprobante_num_o_None), ...]
+    comanda_tot = comanda_tot or {}
     sin_clasificar_raw = defaultdict(float)  # cuenta_id crudo -> monto (solo lo NO mapeado)
+    por_comanda = defaultdict(list)  # comanda_id -> [(date, categoria, monto, comprobante_num_o_None), ...]
     for r in rows:
         try:
             d = datetime.strptime(r["fecha"], "%d/%m/%Y").date()
@@ -534,6 +566,7 @@ def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
             continue
         monto = num(r.get("total"))
         comp_num = _comprobante_num(r.get("comprobante"))
+        comanda_id = str(r.get("comprobante") or "").strip()
         if r.get("pago") is not True:
             # NO se descarta más. Con Independencia confirmamos con datos reales
             # que esto puede ser cuenta corriente genuina O simplemente el pedido
@@ -542,7 +575,7 @@ def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
             # cerró. Antes esto generaba una brecha fantasma contra Facturación
             # (que sí reconoce la venta); ahora queda visible como "Pendiente"
             # en vez de desaparecer en silencio.
-            entradas[(d, "Pendiente")].append((monto, comp_num))
+            por_comanda[comanda_id].append((d, "Pendiente", monto, comp_num))
             continue
         cuenta_id_crudo = r.get("cuenta_id", "")
         if not (cuenta_id_crudo or "").strip():
@@ -552,18 +585,53 @@ def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
             if cat == "Sin clasificar":
                 sin_clasificar_raw[cuenta_id_crudo] += monto
                 cat = "NCB/SID"  # visible como NCB/SID; el texto crudo queda auditado en sin_clasificar_raw
-        entradas[(d, cat)].append((monto, comp_num))
+        por_comanda[comanda_id].append((d, cat, monto, comp_num))
 
     out = defaultdict(lambda: defaultdict(float))
     clusters = []
     monto_excluido_total = 0.0
-    for (d, cat), pares in entradas.items():
-        # agrupar por monto exacto, juntando los comprobantes de cada uno
+    TOLERANCIA_COMANDA = 2.0  # pesos, margen de redondeo entre las dos APIs
+    entradas_fallback = defaultdict(list)  # (date, categoria) -> [(monto, comp_num), ...], SOLO sin comanda_tot
+
+    for comanda_id, filas in por_comanda.items():
+        real = comanda_tot.get(comanda_id) if comanda_id else None
+        cats_presentes = set(f[1] for f in filas)
+        solo_plataforma = bool(cats_presentes) and cats_presentes.issubset(CATEGORIAS_CON_LIQUIDACION_EN_LOTE)
+        cuenta_sum = sum(f[2] for f in filas)
+
+        if real is not None and solo_plataforma and (cuenta_sum - real) > TOLERANCIA_COMANDA:
+            # Lote de plataforma pegado a esta comanda (ver docstring) -- se
+            # corrige usando la venta real de Ventas por Comanda como fuente
+            # de verdad, repartiendo proporcionalmente entre las filas que
+            # tenia (normalmente 1 sola).
+            excluido = cuenta_sum - real
+            monto_excluido_total += excluido
+            factor = (real / cuenta_sum) if cuenta_sum else 0.0
+            clusters.append({
+                "fecha": filas[0][0].isoformat(),
+                "categoria": ",".join(sorted(cats_presentes)),
+                "comanda": comanda_id,
+                "monto_cuenta": round(cuenta_sum),
+                "monto_real": round(real),
+                "excluido": round(excluido),
+                "via": "cruce_comanda_real",
+            })
+            for d, cat, monto, comp_num in filas:
+                out[d][cat] += monto * factor
+        else:
+            for d, cat, monto, comp_num in filas:
+                out[d][cat] += monto
+                if comanda_id and real is None:
+                    entradas_fallback[(d, cat)].append((monto, comp_num))
+
+    # --- respaldo: heuristico viejo (monto+espaciado), SOLO para lo que no
+    # tenia comanda_tot con que cruzar esta corrida ---
+    for (d, cat), pares in entradas_fallback.items():
+        if cat not in CATEGORIAS_CON_LIQUIDACION_EN_LOTE:
+            continue
         por_monto = defaultdict(list)
         for monto, comp_num in pares:
             por_monto[monto].append(comp_num)
-
-        montos_dup = set()
         for monto, comps in por_monto.items():
             if not monto:
                 continue
@@ -572,27 +640,19 @@ def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw):
             criterio_a = monto >= MONTO_SOSPECHOSO_MIN and rep >= DUP_CLUSTER_MIN
             criterio_b = (len(comps_validos) == len(comps)
                           and es_cluster_sospechoso(comps_validos))
+            if criterio_b and rep == 2 and branch in BRANCHES_SIN_LOTE_CONFIRMADO:
+                criterio_b = False
             if not (criterio_a or criterio_b):
                 continue  # ni lote grande obvio ni espaciado sospechoso -> venta real
             excluido = monto * (rep - 1)
             monto_excluido_total += excluido
-            montos_dup.add(monto)
             clusters.append({
                 "fecha": d.isoformat(), "categoria": cat,
                 "monto": round(monto), "repeticiones": rep,
                 "excluido": round(excluido),
+                "via": "respaldo_sin_comanda_tot",
             })
-
-        # deja 1 sola ocurrencia de cada monto que forma parte de un cluster
-        vistos = defaultdict(int)
-        montos_ajustados = []
-        for monto, _ in pares:
-            if monto in montos_dup:
-                vistos[monto] += 1
-                if vistos[monto] > 1:
-                    continue
-            montos_ajustados.append(monto)
-        out[d][cat] += sum(montos_ajustados)
+            out[d][cat] -= excluido  # ya se habia sumado completo arriba
 
     dailymap = {d: dict(cats) for d, cats in out.items()}
     duplicados = {"monto_excluido": round(monto_excluido_total), "clusters": clusters} if clusters else None
@@ -1026,9 +1086,19 @@ def main():
 
     for cliente, suc, branch, grupo in BRANCHES:
         rows = api_call(API_URL, cliente, suc, args.desde, args.hasta, email, pw)
-        daily_cuenta_all[branch], dup_cuenta_all[branch], sc_raw_cuenta_all[branch] = fetch_medios_pago(cliente, suc, branch, grupo, args.desde, args.hasta, email, pw)
         if rows is None:
             api_error_branches.append(branch)
+
+        # Auditoria 23/07/2026: corremos transform() antes de fetch_medios_pago
+        # para poder pasarle el total real por comanda (comanda_tot) y que
+        # cruce Medios de Pago contra la venta real (ver docstring de
+        # fetch_medios_pago), en vez de adivinar duplicados por patron.
+        transform_result = transform(rows, prodcat) if rows else None
+        comanda_tot_this = transform_result[-1] if transform_result else None
+
+        daily_cuenta_all[branch], dup_cuenta_all[branch], sc_raw_cuenta_all[branch] = fetch_medios_pago(
+            cliente, suc, branch, grupo, args.desde, args.hasta, email, pw, comanda_tot=comanda_tot_this)
+
         if not rows:
             prev = _prev_snapshot(master, P, branch)
             if prev is not None:
@@ -1059,7 +1129,7 @@ def main():
                 daily_cupon_py_all[branch]={}
             continue
 
-        A,R,D,g,py,daily,daily_desc,daily_cupon_py,sc = transform(rows, prodcat)
+        A,R,D,g,py,daily,daily_desc,daily_cupon_py,sc,_comanda_tot_unused = transform_result
         ok_b, dq = audit(branch,A,R)
         all_ok &= ok_b
 
