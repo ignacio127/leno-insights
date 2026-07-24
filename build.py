@@ -647,11 +647,19 @@ RENDER.ventas_dia=()=>{
     +(FR_.length?'<option value="Franquicias"'+(vdBr==='Franquicias'?' selected':'')+'>Franquicias</option>':'')
     +all.map(b=>'<option value="'+b+'"'+(vdBr===b?' selected':'')+'>'+b+'</option>').join('');
 
+  // Ticket promedio del scope seleccionado — mismo criterio que la sección Resumen
+  // (promedio simple de DATA.analytics[PERIOD][b].ticket entre las sucursales del scope,
+  // no ponderado por cantidad de comandas; así es como ya se calcula en Resumen).
+  const vdBrsTk=vdBr==='Total'?all:vdBr==='SRL'?SRL_:vdBr==='Franquicias'?FR_:[vdBr];
+  const vdTks=vdBrsTk.map(b=>DATA.analytics[PERIOD][b]&&DATA.analytics[PERIOD][b].ticket).filter(x=>x!=null);
+  const vdTkAvg=vdTks.length?Math.round(vdTks.reduce((a,b)=>a+b,0)/vdTks.length):0;
+
   // KPIs
-  const kpis='<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">'
+  const kpis='<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">'
     +kpi('Mejor día',F(vals[mx]),rows[mx].fecha,undefined,'#16a34a')
     +kpi('Promedio / día',Fm(avg),rows.length+' días',undefined,'#E2001A')
     +kpi('Peor día',F(vals[mn]),rows[mn].fecha,undefined,'#e11d48')
+    +kpi('Ticket promedio',F(vdTkAvg),'por comanda · '+DATA.period_meta[PERIOD].label,undefined,'#2563eb')
     +'</div>';
 
   // Tabla para PDF
@@ -729,7 +737,7 @@ function vdPrint(){
   w.document.close(); w.print();
 }
 let fTurno='ALL';
-RENDER.turnos=()=>{const brs=selBrs(fTurno);const t=mergeDict(brs,'turno');const map={'Mediodia':'Mediodía','AFTER':'After Office','Noche':'Noche'};
+RENDER.turnos=()=>{const brs=selBrs(fTurno);const t=mergeDict(brs,'turno');const map={'Mediodia':'Mediodía','After':'After Office','Noche':'Noche','Mañana':'Mañana'};
  const arr=Object.entries(t).map(([k,v])=>({k:map[k]||k,v})).sort((a,b)=>b.v-a.v);const tot=arr.reduce((s,x)=>s+x.v,0)||1;const el=document.getElementById('sec-turnos');
  el.innerHTML=filterBar('fTurno','turnos',fTurno)+'<div class="grid grid-cols-1 lg:grid-cols-2 gap-4"><div class="card p-5"><div class="font-semibold mb-3">Ventas por turno</div><canvas id="cTurno" height="160"></canvas></div><div class="card p-5"><div class="font-semibold mb-3">Detalle</div>'+arr.map((x,i)=>'<div class="flex justify-between items-center py-3" style="border-bottom:1px solid var(--line)"><span class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full" style="background:'+PAL[i%PAL.length]+'"></span>'+x.k+'</span><div class="text-right"><div class="font-semibold">'+Fm(x.v)+'</div><div class="text-[12px]" style="color:var(--mut)">'+(x.v/tot*100).toFixed(1)+'%</div></div></div>').join('')+'</div></div>';
  mkChart('cTurno',{type:'bar',data:{labels:arr.map(x=>x.k),datasets:[{data:arr.map(x=>x.v),backgroundColor:arr.map((x,i)=>PAL[i%PAL.length]),borderRadius:8}]},options:{indexAxis:'y',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>Fm(c.raw)}}},scales:{x:{ticks:{callback:v=>'$'+(v/1e6).toFixed(1)+'M'},grid:{color:LINE}},y:{grid:{display:false}}}}});
