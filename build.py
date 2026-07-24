@@ -880,29 +880,6 @@ RENDER.mediospago=()=>{
  const rec=((mp.reconciliacion||{})[PERIOD])||{};
  const recFallas=Object.entries(rec).filter(([b,v])=>!v.ok&&(fMediosPago==='ALL'||b===fMediosPago));
 
- // Monto corregido por liquidación en lote (Nave/PedidosYa pegan el total del lote
- // a cada comanda) — ya reconciliado a 0% de gap, esto no es plata perdida, mide
- // exposición operativa por sucursal al patrón de liquidación en lote.
- const dupPeriodo=((mp.duplicados_excluidos||{})[PERIOD])||{};
- const dupBrs=Object.keys(dupPeriodo).filter(b=>fMediosPago==='ALL'||b===fMediosPago);
- let dupCard='';
- if(dupBrs.length){
-  const filasDup=dupBrs.map(b=>{
-   const v=dupPeriodo[b];
-   const gross=((DATA.analytics[PERIOD]||{})[b]||{}).gross||0;
-   const veces=gross?(v.monto_excluido/gross):0;
-   return {b,excluido:v.monto_excluido,gross,veces,n:(v.clusters||[]).length};
-  }).sort((a,b)=>b.veces-a.veces);
-  const nivel=x=>x.veces>=1?'Alta':(x.veces>=0.5?'Media':'Baja');
-  const dcolor=x=>x.veces>=1?'#e11d48':(x.veces>=0.5?'#d97706':'#16a34a');
-  const dbg=x=>x.veces>=1?'#fee2e2':(x.veces>=0.5?'#fef3c7':'#dcfce7');
-  dupCard='<div class="card p-5 mt-4" style="border-left:3px solid #d97706"><div class="font-semibold mb-1">🔁 Pagos anotados por duplicado (ya corregidos) · '+PERIOD+'</div>'+
-   '<div class="text-[12px] mb-3" style="color:var(--mut)">A veces PedidosYa o Nave anotan el mismo cobro repetido varias veces por un error de esas plataformas (ej: un pedido de $500.000 queda anotado 5 veces en vez de una). Ya lo detectamos y lo corregimos automáticamente. <b>Esto no es plata perdida ni un faltante de caja</b> — muestra qué tan seguido pasa este error de registro en cada sucursal, para saber dónde vigilar más de cerca.</div>'+
-   '<div class="grid md:grid-cols-3 gap-3 text-[13px]">'+
-   filasDup.map(x=>'<div class="rounded-lg p-3" style="background:'+dbg(x)+'"><div class="flex items-center justify-between mb-1"><span class="font-semibold" style="color:'+dcolor(x)+'">'+x.b+'</span><span class="badge" style="background:'+dcolor(x)+';color:#fff">Frecuencia '+nivel(x)+'</span></div><div class="text-xl font-bold" style="color:'+dcolor(x)+'">'+x.veces.toFixed(1)+'× la venta del mes</div><div style="color:var(--mut)">Se corrigieron '+Fm(x.excluido)+' en cobros repetidos · '+x.n+' veces detectado</div></div>').join('')+
-   '</div></div>';
- }
-
  const kpis=kpi('Facturación (medios de pago)',Fm(totalRed),(fMediosPago==='ALL'?pbranches().length+' sucursales':fMediosPago)+' · '+DATA.period_meta[PERIOD].label,undefined,'#E2001A')+
   kpi('% Efectivo',pctEfvo.toFixed(1)+'%',wk.length>1?'1ra semana → última':'sin semanas suficientes',wk.length>1?deltaEfvo:undefined,(pctEfvo>40?'#e11d48':'#16a34a'))+
   kpi('% Pagos Digitales',pctNoEfvo.toFixed(1)+'%',pctNoEfvo>=MP_UMBRAL_NOEFVO_ALTO?'⚠ sobre umbral 70%':'bajo umbral 70%',undefined,(pctNoEfvo>=MP_UMBRAL_NOEFVO_ALTO?'#e11d48':'#16a34a'))+
@@ -926,7 +903,7 @@ RENDER.mediospago=()=>{
  }
  let alertB='';
  if(anomalasB.length){
-  alertB='<div class="card p-5 mt-4" style="border-left:3px solid #d97706"><div class="font-semibold mb-3">🔔 Pagos Digitales ≥ 70% (posible venta en efectivo no declarada, o concentración de riesgo en plataformas)</div><div class="grid md:grid-cols-2 gap-3 text-[13px]">'+
+  alertB='<div class="card p-5 mt-4" style="border-left:3px solid #d97706"><div class="font-semibold mb-3">🔔 Pagos Digitales ≥ 70%</div><div class="grid md:grid-cols-2 gap-3 text-[13px]">'+
    anomalasB.map(a=>insight('#d97706',a.b+' · semana '+a.semana,'<b>'+a.pne.toFixed(0)+'% pagos digitales</b> esa semana.')).join('')+
    '</div></div>';
  }
@@ -951,7 +928,7 @@ RENDER.mediospago=()=>{
   '<div class="grid grid-cols-1 md:grid-cols-4 gap-4">'+kpis+'</div>'+
   '<div class="text-[12px] font-semibold mt-5 mb-2" style="color:var(--mut);letter-spacing:.04em">DESGLOSE POR MEDIO DE PAGO</div>'+
   '<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">'+(kpisCat||'<div class="text-[13px]" style="color:var(--mut)">Sin datos todavía.</div>')+'</div>'+
-  recCard+dupCard+alertA+alertB+
+  recCard+alertA+alertB+
   '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">'+
    '<div class="card p-5"><div class="font-semibold mb-3">Mix semanal por categoría · '+(fMediosPago==='ALL'?'Total red':fMediosPago)+'</div><canvas id="cMPStack" height="220"></canvas></div>'+
    '<div class="card p-5"><div class="font-semibold mb-3">% Pagos Digitales por semana <span style="color:var(--mut);font-weight:400">(línea = umbral 70%)</span></div><canvas id="cMPNoEfvo" height="220"></canvas></div>'+
