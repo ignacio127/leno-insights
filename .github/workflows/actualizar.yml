@@ -29,13 +29,6 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: "[TEMPORAL] Diagnostico campos de hora Gesdatta"
-        env:
-          GESDATTA_EMAIL: ${{ secrets.GESDATTA_EMAIL }}
-          GESDATTA_PASSWORD: ${{ secrets.GESDATTA_PASSWORD }}
-        run: |
-          python check_campos_hora.py
-
       - name: Calcular periodos (mes actual y mes anterior)
         id: periodos
         run: |
