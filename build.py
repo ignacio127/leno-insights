@@ -531,12 +531,32 @@ function paintRk(){const arr=rankData();const tot=arr.reduce((s,x)=>s+x.imp,0)||
  document.getElementById('rkBody').innerHTML=cmpNote+'<table class="text-sm"><thead><tr class="text-[12px] text-left" style="color:var(--mut)"><th class="py-2 pr-2 w-8">#</th><th class="py-2 pr-3">Producto</th><th class="py-2 px-3">Categoría</th><th class="py-2 px-3 text-right">Unidades</th><th class="py-2 px-3 text-right">Facturación</th><th class="py-2 px-3 text-right">%</th>'+cmpHead+'</tr></thead><tbody>'+arr.slice(0,60).map((x,i)=>'<tr style="border-top:1px solid var(--line)"><td class="py-2.5 pr-2 font-bold">'+(i===0?CROWN:'<span style=\"color:var(--mut)\">'+(i+1)+'</span>')+'</td><td class="py-2.5 pr-3"><div class="flex items-center gap-2"><span>'+x.nombre+'</span>'+(x.promo&&rkView==='A'?'<span class="badge" style="background:#ffe4ec;color:#FA0050">PROMO</span>':'')+'</div><div class="h-1.5 mt-1.5 rounded-full" style="background:#f0f1f4"><div class="h-full rounded-full" style="width:'+((rkSort==='imp'?x.imp:x.u)/mx*100)+'%;background:'+PAL[i%PAL.length]+'"></div></div></td><td class="py-2.5 px-3 text-[12px]" style="color:var(--mut)">'+x.cat+'</td><td class="py-2.5 px-3 text-right">'+x.u.toLocaleString('es-AR')+'</td><td class="py-2.5 px-3 text-right font-semibold">'+F(x.imp)+'</td><td class="py-2.5 px-3 text-right" style="color:var(--mut)">'+(x.imp/tot*100).toFixed(1)+'%</td>'+cmpCell(x.nombre)+'</tr>').join('')+'</tbody></table>'+(arr.length>60?'<div class="text-[12px] mt-3" style="color:var(--mut)">Top 60 de '+arr.length+'.</div>':'');}
 
 let catSort='imp';
-RENDER.categorias=()=>{const c=DATA.cat[PERIOD];const arr=Object.entries(c).filter(([k])=>k!=='Envíos'&&k!=='Servicio de Mesa').map(([k,v])=>({k,imp:v.imp,u:v.u}));
+RENDER.categorias=()=>{
+ // Auditoria 24/07/2026 (Ramiro): DATA.cat[PERIOD] queda incompleto en algunos
+ // periodos (Julio solo tenia 1,8% de la venta real cargada) porque lo llena un
+ // proceso aparte que no forma parte de ingestor.py -- no se reconstruye entero
+ // en cada corrida como el resto del dashboard. Se recalcula ahora en vivo desde
+ // DATA.rankings[PERIOD], que SI se reconstruye completo cada corrida y ya trae
+ // "cat" por item (mismo dato que usa Ranking de Productos).
+ const acc={};
+ pbranches().forEach(b=>{
+  const items=((DATA.rankings[PERIOD]||{})[b]||{}).items||[];
+  items.forEach(it=>{
+   const k=it.cat==null?null:it.cat;
+   if(k==='Envíos'||k==='Servicio de Mesa') return;
+   const key=k===null?'Sin categorizar':k;
+   if(!acc[key])acc[key]={imp:0,u:0,raw:k};
+   acc[key].imp+=it.imp;acc[key].u+=it.u;
+  });
+ });
+ const arr=Object.entries(acc).map(([k,v])=>({k,imp:v.imp,u:v.u,raw:v.raw}));
  arr.sort((a,b)=>catSort==='imp'?b.imp-a.imp:b.u-a.u);
- const totI=arr.reduce((s,x)=>s+x.imp,0),totU=arr.reduce((s,x)=>s+x.u,0);const mx=catSort==='imp'?arr[0].imp:arr[0].u;
+ const totI=arr.reduce((s,x)=>s+x.imp,0)||1,totU=arr.reduce((s,x)=>s+x.u,0)||1;const mx=(catSort==='imp'?arr[0].imp:arr[0].u)||1;
  const el=document.getElementById('sec-categorias');const tgcss=on=>on?'background:#E2001A;color:#fff':'';
  el.innerHTML='<div class="card p-5"><div class="flex items-center justify-between flex-wrap gap-2 mb-1"><div class="font-semibold">Participación por categoría · '+DATA.period_meta[PERIOD].label+'</div><div class="flex rounded-lg overflow-hidden text-xs border" style="border-color:var(--line)"><div class="tg px-3 py-1.5" style="'+tgcss(catSort==='imp')+'" onclick="catSort=\'imp\';RENDER.categorias()">$ Facturación</div><div class="tg px-3 py-1.5" style="'+tgcss(catSort==='u')+'" onclick="catSort=\'u\';RENDER.categorias()">Unidades</div></div></div><div class="text-[12px] mb-4" style="color:var(--mut)">Tocá una categoría para verla en el ranking · se muestran $ y unidades</div>'+
-  arr.map((x,i)=>'<div class="click mb-3 p-1.5 rounded-lg" onclick="rkCat=\''+x.k+'\';rkScope=\'ALL\';go(\'ranking\')"><div class="flex justify-between text-sm mb-1"><span class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full" style="background:'+PAL[i%PAL.length]+'"></span>'+x.k+'</span><span class="font-semibold">'+Fm(x.imp)+' <span style="color:var(--mut)">· '+(x.imp/totI*100).toFixed(1)+'%</span> <span class="badge" style="background:#eef2ff;color:#4338ca">'+x.u.toLocaleString('es-AR')+' u · '+(x.u/totU*100).toFixed(1)+'%</span></span></div><div class="h-3 rounded-full" style="background:#f0f1f4"><div class="h-full rounded-full" style="width:'+((catSort==='imp'?x.imp:x.u)/mx*100)+'%;background:'+PAL[i%PAL.length]+'"></div></div></div>').join('')+'</div>';
+  arr.map((x,i)=>'<div class="'+(x.raw===null?'':'click')+' mb-3 p-1.5 rounded-lg"'+(x.raw===null?'':' onclick="rkCat=\''+x.k+'\';rkScope=\'ALL\';go(\'ranking\')"')+'><div class="flex justify-between text-sm mb-1"><span class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full" style="background:'+(x.raw===null?'#9aa1b2':PAL[i%PAL.length])+'"></span>'+x.k+'</span><span class="font-semibold">'+Fm(x.imp)+' <span style="color:var(--mut)">· '+(x.imp/totI*100).toFixed(1)+'%</span> <span class="badge" style="background:#eef2ff;color:#4338ca">'+x.u.toLocaleString('es-AR')+' u · '+(x.u/totU*100).toFixed(1)+'%</span></span></div><div class="h-3 rounded-full" style="background:#f0f1f4"><div class="h-full rounded-full" style="width:'+((catSort==='imp'?x.imp:x.u)/mx*100)+'%;background:'+(x.raw===null?'#9aa1b2':PAL[i%PAL.length])+'"></div></div></div>').join('')+
+  note('Recalculado en vivo desde el ranking de productos del período (antes dependía de un dato aparte que se había quedado desactualizado). "Sin categorizar" son productos nuevos que todavía no tienen categoría asignada.')+
+  '</div>';
 };
 
 let fCanal='ALL';
@@ -870,15 +890,16 @@ RENDER.mediospago=()=>{
   const filasDup=dupBrs.map(b=>{
    const v=dupPeriodo[b];
    const gross=((DATA.analytics[PERIOD]||{})[b]||{}).gross||0;
-   const pct=gross?(v.monto_excluido/gross*100):0;
-   return {b,excluido:v.monto_excluido,gross,pct,n:(v.clusters||[]).length};
-  }).sort((a,b)=>b.pct-a.pct);
-  const dcolor=x=>x.pct>=100?'#e11d48':(x.pct>=50?'#d97706':'#16a34a');
-  const dbg=x=>x.pct>=100?'#fee2e2':(x.pct>=50?'#fef3c7':'#dcfce7');
-  dupCard='<div class="card p-5 mt-4" style="border-left:3px solid #d97706"><div class="font-semibold mb-1">🔁 Monto corregido por liquidación en lote · '+PERIOD+'</div>'+
-   '<div class="text-[12px] mb-3" style="color:var(--mut)">Nave/PedidosYa a veces le pegan el total de un lote a cada comanda del lote en vez de repartirlo — ya corregido contra Ventas por Comanda. No es plata perdida, mide exposición al patrón por sucursal.</div>'+
+   const veces=gross?(v.monto_excluido/gross):0;
+   return {b,excluido:v.monto_excluido,gross,veces,n:(v.clusters||[]).length};
+  }).sort((a,b)=>b.veces-a.veces);
+  const nivel=x=>x.veces>=1?'Alta':(x.veces>=0.5?'Media':'Baja');
+  const dcolor=x=>x.veces>=1?'#e11d48':(x.veces>=0.5?'#d97706':'#16a34a');
+  const dbg=x=>x.veces>=1?'#fee2e2':(x.veces>=0.5?'#fef3c7':'#dcfce7');
+  dupCard='<div class="card p-5 mt-4" style="border-left:3px solid #d97706"><div class="font-semibold mb-1">🔁 Pagos anotados por duplicado (ya corregidos) · '+PERIOD+'</div>'+
+   '<div class="text-[12px] mb-3" style="color:var(--mut)">A veces PedidosYa o Nave anotan el mismo cobro repetido varias veces por un error de esas plataformas (ej: un pedido de $500.000 queda anotado 5 veces en vez de una). Ya lo detectamos y lo corregimos automáticamente. <b>Esto no es plata perdida ni un faltante de caja</b> — muestra qué tan seguido pasa este error de registro en cada sucursal, para saber dónde vigilar más de cerca.</div>'+
    '<div class="grid md:grid-cols-3 gap-3 text-[13px]">'+
-   filasDup.map(x=>'<div class="rounded-lg p-3" style="background:'+dbg(x)+'"><div class="font-semibold mb-0.5" style="color:'+dcolor(x)+'">'+x.b+'</div><div class="text-xl font-bold" style="color:'+dcolor(x)+'">'+x.pct.toFixed(1)+'%</div><div style="color:var(--mut)">'+Fm(x.excluido)+' sobre gross '+Fm(x.gross)+' · '+x.n+' clusters</div></div>').join('')+
+   filasDup.map(x=>'<div class="rounded-lg p-3" style="background:'+dbg(x)+'"><div class="flex items-center justify-between mb-1"><span class="font-semibold" style="color:'+dcolor(x)+'">'+x.b+'</span><span class="badge" style="background:'+dcolor(x)+';color:#fff">Frecuencia '+nivel(x)+'</span></div><div class="text-xl font-bold" style="color:'+dcolor(x)+'">'+x.veces.toFixed(1)+'× la venta del mes</div><div style="color:var(--mut)">Se corrigieron '+Fm(x.excluido)+' en cobros repetidos · '+x.n+' veces detectado</div></div>').join('')+
    '</div></div>';
  }
 
