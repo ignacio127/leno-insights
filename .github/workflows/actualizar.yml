@@ -28,6 +28,41 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: "[TEMPORAL] Diagnostico campos de hora Gesdatta"
+        env:
+          GESDATTA_EMAIL: ${{ secrets.GESDATTA_EMAIL }}
+          GESDATTA_PASSWORD: ${{ secrets.GESDATTA_PASSWORD }}
+        run: |
+          python check_campos_hora.py
+
+      - name: Calcular periodos (mes actual y mes anterior)
+        id: periodos
+        run: |
+          MESES=(Enero Febrero Marzo Abril Mayo Junio Julio Agosto Septiembre Octubre Noviembre Diciembre)
+          HOY=$(date +%Y-%m-%d)
+          ANIO_ACT=$(date +%Y); MES_ACT=$(date +%-m)
+          PERIODO_ACT=${MESES[$((MES_ACT-1))]}
+          DESDE_ACT="${ANIO_ACT}-$(printf '%02d' $MES_ACT)-01"
+          HASTA_ACT="$HOY"
+          PRIMER_DIA_ACT="${ANIO_ACT}-$(printf '%02d' $MES_ACT)-01"
+          HASTA_ANT=$(date -d "$PRIMER_DIA_ACT -1 day" +%Y-%m-%d)
+          DESDE_ANT=$(date -d "$HASTA_ANT" +%Y-%m-01)
+          MES_ANT=$(date -d "$HASTA_ANT" +%-m)
+          PERIODO_ANT=${MESES[$((MES_ANT-1))]}
+          echo "periodo_act=$PERIODO_ACT" >> "$GITHUB_OUTPUT"
+          echo "desde_act=$DESDE_ACT"     >> "$GITHUB_OUTPUT"
+          echo "hasta_act=$HASTA_ACT"     >> "$GITHUB_OUTPUT"
+          echo "periodo_ant=$PERIODO_ANT" >> "$GITHUB_OUTPUT"
+          echo "desde_ant=$DESDE_ANT"     >> "$GITHUB_OUTPUT"
+          echo "hasta_ant=$HASTA_ANT"     >> "$GITHUB_OUTPUT"
+          echo "Mes anterior: $PERIODO_ANT ($DESDE_ANT -> $HASTA_ANT)"
+          echo "Mes actual:   $PERIODO_ACT ($DESDE_ACT -> $HASTA_ACT)"
+      - name: Correr ingestor
 
       - name: Calcular periodos (mes actual y mes anterior)
         id: periodos
