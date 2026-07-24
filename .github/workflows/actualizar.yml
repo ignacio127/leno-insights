@@ -29,15 +29,6 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: "[TEMPORAL] Aplicar normalizacion turnos"
-        run: |
-          python normalizar_turnos.py --aplicar
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add master.json
-          git commit -m "data: normalizar turno_id (Mañana/Mediodia/Noche/After)"
-          git push
-
       - name: Calcular periodos (mes actual y mes anterior)
         id: periodos
         run: |
