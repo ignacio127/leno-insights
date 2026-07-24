@@ -502,11 +502,16 @@ def _comprobante_num(comprobante_str):
 DUP_CLUSTER_MIN = 5
 MONTO_SOSPECHOSO_MIN = 100_000
 
-# Auditoria 23/07/2026 (Ramiro): categorias con intermediario, las unicas
-# donde puede existir un "lote" que se liquide de una y se pegue mal repartido.
-# Efectivo/LENO+/NCB-SID/Pendiente se cobran directo, sin intermediario -- no
-# tiene sustento de negocio tratarlos como posible duplicado de plataforma.
-CATEGORIAS_CON_LIQUIDACION_EN_LOTE = {"Nave", "PedidosYa", "Tarjeta (PayWay)", "MercadoPago/QR"}
+# Auditoria 23/07/2026 (Ramiro): categorias donde se confirmo con datos reales
+# que Gesdatta puede pegarle el mismo monto (de un turno/lote) a varias comandas
+# distintas en vez de repartirlo. Nave/PedidosYa/Tarjeta/MercadoPago: liquidacion
+# de plataforma. Efectivo: NO es liquidacion de plataforma (no hay intermediario)
+# pero se confirmo el MISMO patron via cierre de turno/caja -- ver caso FLIP
+# 19/07/2026 (16 comandas, 3 grupos con monto identico repetido; API=$1.944.990
+# vs real por comanda=$369.150, ratio 5.3x). Se corrige igual: cruzando contra
+# comanda_tot (dato confiable de restoVentasComanda). LENO+/NCB-SID/Pendiente
+# quedan afuera por ahora: sin evidencia de que tengan este bug.
+CATEGORIAS_CON_LIQUIDACION_EN_LOTE = {"Nave", "PedidosYa", "Tarjeta (PayWay)", "MercadoPago/QR", "Efectivo"}
 
 # Respaldo del heuristico viejo (monto+espaciado de comprobante), usado SOLO
 # cuando no tenemos comanda_tot para cruzar (ver fetch_medios_pago). Sucursales
