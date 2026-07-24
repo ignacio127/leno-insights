@@ -120,6 +120,26 @@ SERVM = re.compile(r"SERVICIO.*MESA|CUBIERTO", re.I)
 # ===========================================================================
 # TRANSFORM
 # ===========================================================================
+def normalize_turno(raw):
+    """Colapsa cualquier variante cruda de turno_id al estandar de 4 categorias
+    (Manana / Mediodia / Noche / After), blindado por prefijo contra nombres
+    de turno con sucursal pegada (fix 24/07/2026, Ramiro)."""
+    r = (raw or "").strip()
+    if not r:
+        return "?"
+    ru = r.upper()
+    if ru.startswith("AFTER"):
+        return "After"
+    if ru.startswith("NOCHE"):
+        return "Noche"
+    if ru.startswith("MEDIODIA"):
+        return "Mediodia"
+    if ru.startswith("TARDE"):
+        return "Mediodia"
+    if ru.startswith("MA") and "ANA" in ru.replace("\u00d1", "N"):
+        return "Ma\u00f1ana"
+    return r
+
 def transform(rows, prodcat):
     canal = defaultdict(float); turno = defaultdict(float); comp = defaultdict(float)
     desc = 0.0; descdet = defaultdict(float)
@@ -175,7 +195,7 @@ def transform(rows, prodcat):
         gross += v
         cl = (r.get("tipo_delivery") or "").strip() or "Salón/Mostrador"
         canal[cl] += v
-        turno[(r.get("turno_id") or "").strip() or "?"] += v
+        turno[normalize_turno(r.get("turno_id"))] += v
         ing = (r.get("ingreso") or "").strip()
         tipo_comp = ing.split()[0] if ing else "S/C"
         comp[tipo_comp] += v
