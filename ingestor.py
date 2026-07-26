@@ -10,7 +10,7 @@ Uso:
     python ingestor.py
     python ingestor.py --desde 2026-06-01 --hasta 2026-06-30 --periodo Junio
 """
-import json, os, re, sys, argparse, subprocess, urllib.request, urllib.error
+import json, os, re, sys, argparse, subprocess, time, urllib.request, urllib.error
 from collections import defaultdict, Counter
 from datetime import date, datetime, timedelta
 
@@ -61,7 +61,12 @@ def load_env():
 # ===========================================================================
 # API
 # ===========================================================================
-def api_call(url, cliente, suc, desde, hasta, email, pw, estado=""):
+def api_call(url, cliente, suc, desde, hasta, email, pw, estado="", _intentos=3, _espera=5):
+    """Llama a la API de Gesdatta con reintento y backoff simple ante fallas
+    transitorias (fix 26/07/2026, ver auditoría): un 403/Cloudflare, un timeout
+    o un 5xx puntual ya no tira la sucursal a 'sin datos' de una sola vez —
+    reintenta hasta _intentos veces antes de rendirse y devolver None (que
+    main() sigue tratando igual que 'SIN DATOS', conservando el valor previo)."""
     body = json.dumps({
         "email": email, "password": pw, "cliente": cliente,
         "f_desde": desde, "f_hasta": hasta, "estado": estado,
@@ -74,32 +79,57 @@ def api_call(url, cliente, suc, desde, hasta, email, pw, estado=""):
                          "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     }
     req = urllib.request.Request(url, data=body, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=180) as r:
-            data = json.loads(r.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        bt = e.read().decode("utf-8", "ignore")[:300]
-        hint = ""
-        if e.code == 403 or "1010" in bt:
-            hint = "  → Bloqueo Cloudflare. Corré desde la misma red donde funciona tu Power Query."
-        print(f"  ‼ ERROR HTTP {e.code} en {cliente}/{suc}: {bt}\n{hint}")
-        return None  # main() lo trata igual que 'SIN DATOS' y conserva el valor previo
-    except Exception as e:
-        print(f"  ‼ ERROR de red en {cliente}/{suc}: {e}")
-        return None
-    return data.get("datos", [])
+
+    TRANSITORIOS = {403, 429, 500, 502, 503, 504}
+    for intento in range(1, _intentos + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=180) as r:
+                data = json.loads(r.read().decode("utf-8"))
+            return data.get("datos", [])
+        except urllib.error.HTTPError as e:
+            bt = e.read().decode("utf-8", "ignore")[:300]
+            hint = ""
+            if e.code == 403 or "1010" in bt:
+                hint = "  → Bloqueo Cloudflare. Corré desde la misma red donde funciona tu Power Query."
+            transitorio = e.code in TRANSITORIOS
+            if transitorio and intento < _intentos:
+                print(f"  ‼ ERROR HTTP {e.code} en {cliente}/{suc} (intento {intento}/{_intentos}, reintentando en {_espera}s): {bt}\n{hint}")
+                time.sleep(_espera)
+                continue
+            print(f"  ‼ ERROR HTTP {e.code} en {cliente}/{suc} (agotados {intento} intentos): {bt}\n{hint}")
+            return None  # main() lo trata igual que 'SIN DATOS' y conserva el valor previo
+        except Exception as e:
+            if intento < _intentos:
+                print(f"  ‼ ERROR de red en {cliente}/{suc} (intento {intento}/{_intentos}, reintentando en {_espera}s): {e}")
+                time.sleep(_espera)
+                continue
+            print(f"  ‼ ERROR de red en {cliente}/{suc} (agotados {intento} intentos): {e}")
+            return None
+    return None
 
 # ===========================================================================
 # Utilidades
 # ===========================================================================
+_NUM_WARN_VISTOS = set()  # fix 26/07/2026: dedupe de avisos, ver comentario abajo
+
 def num(x):
     if x is None: return 0.0
     if isinstance(x, (int, float)): return float(x)
     s = str(x).strip().replace("$","").replace(" ","")
     if "," in s and "." in s: s = s.replace(".","").replace(",",".")
     elif "," in s: s = s.replace(",",".")
-    try: return float(s)
-    except: return 0.0
+    try:
+        return float(s)
+    except:
+        # fix 26/07/2026: antes esto degradaba a 0.0 en silencio absoluto -- si
+        # Gesdatta cambia el formato de un número, todo se va a cero sin ninguna
+        # alerta. Ahora al menos queda un aviso en el log (una vez por valor
+        # distinto, para no inundar la corrida si se repite miles de veces).
+        # No cambia el comportamiento: sigue devolviendo 0.0 igual que antes.
+        if s and s not in _NUM_WARN_VISTOS:
+            _NUM_WARN_VISTOS.add(s)
+            print(f"  ⚠ num(): valor no numérico {x!r} -> se usó 0.0. Si esto aparece seguido, Gesdatta puede haber cambiado el formato de números.")
+        return 0.0
 
 def build_prodcat(master):
     v = defaultdict(Counter)
