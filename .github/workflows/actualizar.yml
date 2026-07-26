@@ -57,20 +57,48 @@ jobs:
           GESDATTA_EMAIL: ${{ secrets.GESDATTA_EMAIL }}
           GESDATTA_PASSWORD: ${{ secrets.GESDATTA_PASSWORD }}
         run: |
-          python ingestor.py --desde ${{ steps.periodos.outputs.desde_ant }} --hasta ${{ steps.periodos.outputs.hasta_ant }} --periodo ${{ steps.periodos.outputs.periodo_ant }}
-          python ingestor.py --desde ${{ steps.periodos.outputs.desde_act }} --hasta ${{ steps.periodos.outputs.hasta_act }} --periodo ${{ steps.periodos.outputs.periodo_act }}
+          # CORRECCIÓN 26/07/2026: ingestor.py ya corre build.py internamente al
+          # final de main() salvo que se le pase --no-build (ver ingestor.py
+          # línea ~1352). Sin este flag, build.py se ejecutaba DOS veces acá
+          # adentro (una vez por cada período) de forma implícita, y una tercera
+          # vez con el paso explícito de abajo -- redundante y poco visible.
+          # Con --no-build dejamos que el paso "Reconstruir dashboard" sea el
+          # único punto donde se genera index.html, ya con ambos períodos
+          # actualizados.
+          python ingestor.py --desde ${{ steps.periodos.outputs.desde_ant }} --hasta ${{ steps.periodos.outputs.hasta_ant }} --periodo ${{ steps.periodos.outputs.periodo_ant }} --no-build
+          python ingestor.py --desde ${{ steps.periodos.outputs.desde_act }} --hasta ${{ steps.periodos.outputs.hasta_act }} --periodo ${{ steps.periodos.outputs.periodo_act }} --no-build
 
-      - name: Guardar master.json actualizado en el repo
+      - name: Reconstruir dashboard (build.py)
+        # CORRECCIÓN 26/07/2026 (autocrítica de auditoría): en la corrida anterior
+        # de este análisis afirmé que el workflow NUNCA ejecutaba build.py y que el
+        # dashboard publicado estaba congelado. Eso fue un error de auditoría: no
+        # revisé el final de ingestor.py, que sí llama a build.py automáticamente
+        # (subprocess) salvo que se pase --no-build. Verificado con test aislado:
+        # el sitio publicado en Pages muy probablemente SÍ se actualizaba en cada
+        # corrida, porque "Preparar carpeta para publicar" copiaba el index.html
+        # ya reconstruido en el paso "Correr ingestor".
+        # El problema REAL (confirmado) es otro: ese index.html reconstruido nunca
+        # se commiteaba de vuelta al repo (el paso de git solo agregaba
+        # master.json) -- por eso el archivo *versionado en git* seguía
+        # mostrando "Julio 1-3" semanas después, aunque lo publicado en Pages
+        # probablemente ya reflejara datos frescos. Este paso ahora es explícito
+        # y único (los dos "ingestor.py" de arriba corren con --no-build), y el
+        # siguiente paso sí commitea index.html junto con master.json para que
+        # el repo deje de estar desincronizado de lo publicado.
+        run: |
+          python build.py
+
+      - name: Guardar master.json e index.html actualizados en el repo
         continue-on-error: true
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add master.json
+          git add master.json index.html
           if git diff --staged --quiet; then
-            echo "Sin cambios en master.json, nada para commitear."
+            echo "Sin cambios en master.json/index.html, nada para commitear."
             exit 0
           fi
-          git commit -m "data: actualizar master.json $(date +%Y-%m-%d)"
+          git commit -m "data: actualizar master.json + index.html $(date +%Y-%m-%d)"
 
           intentos=0; maximo=3
           while [ $intentos -lt $maximo ]; do
@@ -88,8 +116,8 @@ jobs:
             fi
             sleep 5
           done
-          echo "ERROR: no se pudo pushear master.json después de $maximo intentos."
-          echo "El dashboard SÍ se va a publicar con los datos de esta corrida (siguen en el runner) — lo que queda pendiente es el commit de master.json al repo, que se sincroniza solo en la próxima corrida que logre pushear."
+          echo "ERROR: no se pudo pushear master.json/index.html después de $maximo intentos."
+          echo "El dashboard SÍ se va a publicar con los datos de esta corrida (siguen en el runner, index.html ya fue reconstruido) — lo que queda pendiente es el commit al repo, que se sincroniza solo en la próxima corrida que logre pushear."
           exit 1
 
       - name: Preparar carpeta para publicar
