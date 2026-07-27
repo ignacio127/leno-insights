@@ -153,7 +153,18 @@ SERVM = re.compile(r"SERVICIO.*MESA|CUBIERTO", re.I)
 def normalize_turno(raw):
     """Colapsa cualquier variante cruda de turno_id al estandar de 4 categorias
     (Manana / Mediodia / Noche / After), blindado por prefijo contra nombres
-    de turno con sucursal pegada (fix 24/07/2026, Ramiro)."""
+    de turno con sucursal pegada (fix 24/07/2026, Ramiro).
+
+    fix 27/07/2026 (Ramiro): "Tarde" (turno legacy de Independencia, ya no
+    se usa pero se preserva en historico) pasa a agrupar en "Noche", no en
+    "Mediodia" como antes -- decision de negocio confirmada, no un ajuste
+    de dato. Ademas, lo que no matchea ningun prefijo conocido ya no
+    devuelve el texto crudo tal cual (quedaba como categoria fantasma
+    suelta en el grafico, sin ninguna alerta) -- ahora cae en "Sin
+    clasificar", mismo criterio que normalizar_cuenta() usa para medios
+    de pago: visible y auditable en vez de silencioso. Si aparece "Sin
+    clasificar" en el dashboard es senal de que Gesdatta mando un
+    turno_id nuevo que hay que agregar aca."""
     r = (raw or "").strip()
     if not r:
         return "?"
@@ -165,10 +176,10 @@ def normalize_turno(raw):
     if ru.startswith("MEDIODIA"):
         return "Mediodia"
     if ru.startswith("TARDE"):
-        return "Mediodia"
+        return "Noche"
     if ru.startswith("MA") and "ANA" in ru.replace("\u00d1", "N"):
         return "Ma\u00f1ana"
-    return r
+    return "Sin clasificar"
 
 def transform(rows, prodcat):
     canal = defaultdict(float); turno = defaultdict(float); comp = defaultdict(float)
