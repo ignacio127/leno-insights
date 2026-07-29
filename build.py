@@ -737,13 +737,10 @@ function vdPrint(){
   w.document.close(); w.print();
 }
 let fTurno='ALL';
-const TURNO_SIN_CLASIFICAR_COLOR='#9aa1b2'; // mismo gris que MP_PAL['Sin clasificar'] (fix 27/07/2026, Ramiro): color fijo, no por ranking
-function colorTurno(k,i){return k==='Sin clasificar'?TURNO_SIN_CLASIFICAR_COLOR:PAL[i%PAL.length];}
 RENDER.turnos=()=>{const brs=selBrs(fTurno);const t=mergeDict(brs,'turno');const map={'Mediodia':'Mediodía','After':'After Office','Noche':'Noche','Mañana':'Mañana'};
  const arr=Object.entries(t).map(([k,v])=>({k:map[k]||k,v})).sort((a,b)=>b.v-a.v);const tot=arr.reduce((s,x)=>s+x.v,0)||1;const el=document.getElementById('sec-turnos');
- const sinClas=(t['Sin clasificar']||0);
- el.innerHTML=filterBar('fTurno','turnos',fTurno)+(sinClas>0?note('⚠ Hay '+Fm(sinClas)+' en turnos "Sin clasificar" — revisar normalize_turno() en ingestor.py, puede haber un turno_id nuevo sin mapear.'):'')+'<div class="grid grid-cols-1 lg:grid-cols-2 gap-4"><div class="card p-5"><div class="font-semibold mb-3">Ventas por turno</div><canvas id="cTurno" height="160"></canvas></div><div class="card p-5"><div class="font-semibold mb-3">Detalle</div>'+arr.map((x,i)=>'<div class="flex justify-between items-center py-3" style="border-bottom:1px solid var(--line)"><span class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full" style="background:'+colorTurno(x.k,i)+'"></span>'+x.k+'</span><div class="text-right"><div class="font-semibold">'+Fm(x.v)+'</div><div class="text-[12px]" style="color:var(--mut)">'+(x.v/tot*100).toFixed(1)+'%</div></div></div>').join('')+'</div></div>';
- mkChart('cTurno',{type:'bar',data:{labels:arr.map(x=>x.k),datasets:[{data:arr.map(x=>x.v),backgroundColor:arr.map((x,i)=>colorTurno(x.k,i)),borderRadius:8}]},options:{indexAxis:'y',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>Fm(c.raw)}}},scales:{x:{ticks:{callback:v=>'$'+(v/1e6).toFixed(1)+'M'},grid:{color:LINE}},y:{grid:{display:false}}}}});
+ el.innerHTML=filterBar('fTurno','turnos',fTurno)+'<div class="grid grid-cols-1 lg:grid-cols-2 gap-4"><div class="card p-5"><div class="font-semibold mb-3">Ventas por turno</div><canvas id="cTurno" height="160"></canvas></div><div class="card p-5"><div class="font-semibold mb-3">Detalle</div>'+arr.map((x,i)=>'<div class="flex justify-between items-center py-3" style="border-bottom:1px solid var(--line)"><span class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full" style="background:'+PAL[i%PAL.length]+'"></span>'+x.k+'</span><div class="text-right"><div class="font-semibold">'+Fm(x.v)+'</div><div class="text-[12px]" style="color:var(--mut)">'+(x.v/tot*100).toFixed(1)+'%</div></div></div>').join('')+'</div></div>';
+ mkChart('cTurno',{type:'bar',data:{labels:arr.map(x=>x.k),datasets:[{data:arr.map(x=>x.v),backgroundColor:arr.map((x,i)=>PAL[i%PAL.length]),borderRadius:8}]},options:{indexAxis:'y',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>Fm(c.raw)}}},scales:{x:{ticks:{callback:v=>'$'+(v/1e6).toFixed(1)+'M'},grid:{color:LINE}},y:{grid:{display:false}}}}});
 };
 let fFisc='ALL';
 RENDER.fiscal=()=>{const brs=selBrs(fFisc);const c=mergeDict(brs,'comprobante');const lbl={'FAB':'FAB · Factura B','FAA':'FAA · Factura A','FAX':'FAX · Ticket/no fiscal','S/C':'Sin comprobante','NCB':'NCB · Nota de Crédito B','NCA':'NCA · Nota de Crédito A','NCX':'NCX · Nota de Crédito X'};
@@ -856,10 +853,69 @@ function mpWeeklyScope(periodo,brs){
  });
 }
 let fMediosPago='ALL';
+let mpVista='gerencial'; // 'gerencial' | 'auditoria' -- auditoria diaria por turno, agregado 29/07/2026
+let mpDia=null; // fecha ISO seleccionada en modo auditoria; null hasta que el usuario elija
+function mpDiasDisponibles(branch){
+ const dt=((DATA.medios_pago||{}).diario_turno||{})[PERIOD]||{};
+ return Object.keys(dt[branch]||{}).sort();
+}
+function mpToggleVista(v){mpVista=v;if(v==='auditoria'&&!mpDia){const brs=selBrs(fMediosPago);const b=brs[0];const fechas=mpDiasDisponibles(b);mpDia=fechas.length?fechas[fechas.length-1]:null;}RENDER.mediospago();}
+function mpToggleHTML(){
+ return '<div class="flex gap-2 mb-4">'+
+  '<button class="hbtn" style="'+(mpVista==='gerencial'?'background:#fdeaec;border-color:#E2001A;color:#E2001A':'')+'" onclick="mpToggleVista(\'gerencial\')">Gerencial · mensual/semanal</button>'+
+  '<button class="hbtn" style="'+(mpVista==='auditoria'?'background:#fdeaec;border-color:#E2001A;color:#E2001A':'')+'" onclick="mpToggleVista(\'auditoria\')">Auditoría diaria por turno</button>'+
+  '</div>';
+}
 RENDER.mediospago=()=>{
  const el=document.getElementById('sec-mediospago');
  const mp=DATA.medios_pago;
  if(!mp){el.innerHTML='<div class="card p-8 text-center" style="color:var(--mut)">Todavía no hay datos de medios de pago cargados para este período.</div>';return;}
+
+ if(mpVista==='auditoria'){
+  const brsAud=pbranches();
+  const bSel=(fMediosPago!=='ALL'&&brsAud.indexOf(fMediosPago)>=0)?fMediosPago:brsAud[0];
+  const fechas=mpDiasDisponibles(bSel);
+  if(!mpDia||fechas.indexOf(mpDia)<0)mpDia=fechas.length?fechas[fechas.length-1]:null;
+  const dt=((mp.diario_turno||{})[PERIOD]||{})[bSel]||{};
+  const turnosDia=mpDia?(dt[mpDia]||{}):{};
+  const soloNoche=['Tafi Viejo','Peron','FLIP'].indexOf(bSel)>=0;
+  const TURNO_ORDEN=['Mañana','Mediodia','Noche','After','Turno no identificado'];
+  const turnosOrdenados=TURNO_ORDEN.filter(t=>turnosDia[t]);
+  const filas=turnosOrdenados.map(t=>{
+   const cats=turnosDia[t]||{};
+   const tot=mpTotal(cats);
+   const esperado=soloNoche&&turnosOrdenados.length===1;
+   const badge=t==='Turno no identificado'
+    ?'<span class="badge" style="background:#fef3c7;color:#d97706">revisar cobertura</span>'
+    :'<span class="badge" style="background:#dcfce7;color:#16a34a">'+(esperado?'ok · único turno esperado':'ok')+'</span>';
+   return '<tr style="border-top:1px solid var(--line)"><td class="py-2 pr-3 font-medium">'+t+'</td>'+
+    MP_CATS.filter(c=>(cats[c]||0)>0).map(c=>'<td class="py-2 px-3 text-right">'+F(cats[c])+'</td>').join('')+
+    '<td class="py-2 px-3 text-right font-semibold">'+F(tot)+'</td>'+
+    '<td class="py-2 px-3 text-right">'+badge+'</td></tr>';
+  }).join('');
+  const catsPresentes=MP_CATS.filter(c=>turnosOrdenados.some(t=>(turnosDia[t]||{})[c]>0));
+  el.innerHTML=mpToggleHTML()+
+   '<div class="flex items-center gap-2 mb-4">'+
+    '<span class="text-[12px] font-semibold" style="color:var(--mut)">Sucursal:</span>'+
+    '<select class="sel" onchange="fMediosPago=this.value;mpDia=null;RENDER.mediospago()">'+
+     brsAud.map(b=>'<option value="'+b+'"'+(b===bSel?' selected':'')+'>'+b+'</option>').join('')+
+    '</select>'+
+    '<span class="text-[12px] font-semibold" style="color:var(--mut)">Día:</span>'+
+    '<select class="sel" onchange="mpDia=this.value;RENDER.mediospago()">'+
+     (fechas.length?fechas.map(f=>'<option value="'+f+'"'+(f===mpDia?' selected':'')+'>'+f+'</option>').join(''):'<option>Sin días cargados</option>')+
+    '</select>'+
+   '</div>'+
+   (!fechas.length?'<div class="card p-8 text-center" style="color:var(--mut)">Todavía no hay datos diarios por turno cargados para '+bSel+' en este período.</div>':
+   '<div class="card p-5"><div class="font-semibold mb-3">Detalle por turno · '+bSel+' · '+mpDia+'</div><div style="overflow-x:auto"><table class="text-sm"><thead><tr class="text-[12px] text-left" style="color:var(--mut)"><th class="py-2 pr-3">Turno</th>'+
+    catsPresentes.map(c=>'<th class="py-2 px-3 text-right">'+c+'</th>').join('')+
+    '<th class="py-2 px-3 text-right">Total</th><th class="py-2 px-3 text-right">Estado</th></tr></thead><tbody>'+
+    (filas||'<tr><td colspan="'+(catsPresentes.length+3)+'" class="py-4 text-center" style="color:var(--mut)">Sin turnos con monto este día.</td></tr>')+
+    '</tbody></table></div>'+
+    (soloNoche?note(bSel+' opera estructuralmente en un solo turno (horario noche) — un único renglón "ok" es lo esperado, no una falla de datos.'):'')+
+    '</div>');
+  return;
+ }
+
  const brs=selBrs(fMediosPago);
  const porPeriodo=(mp.por_periodo||{})[PERIOD]||{};
  const totalCats={};brs.forEach(b=>{const c=porPeriodo[b];if(c)Object.entries(c).forEach(([k,v])=>totalCats[k]=(totalCats[k]||0)+v);});
@@ -935,7 +991,7 @@ RENDER.mediospago=()=>{
   }).join(''):'<tr><td colspan="'+(MP_CATS.length+3)+'" class="py-4 text-center" style="color:var(--mut)">Sin semanas cargadas todavía para este período.</td></tr>')+
   '</tbody></table></div>'+note('SRL no opera con Tarjeta (PayWay) ni Nave; Franquicias no discriminan "LENO+ (canal propio)". Esas celdas en "—" son estructurales, no datos faltantes.')+'</div>';
 
- el.innerHTML=filterBar('fMediosPago','mediospago',fMediosPago)+
+ el.innerHTML=mpToggleHTML()+filterBar('fMediosPago','mediospago',fMediosPago)+
   '<div class="grid grid-cols-1 md:grid-cols-4 gap-4">'+kpis+'</div>'+
   '<div class="text-[12px] font-semibold mt-5 mb-2" style="color:var(--mut);letter-spacing:.04em">DESGLOSE POR MEDIO DE PAGO</div>'+
   '<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">'+(kpisCat||'<div class="text-[13px]" style="color:var(--mut)">Sin datos todavía.</div>')+'</div>'+
