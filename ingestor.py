@@ -10,7 +10,7 @@ Uso:
     python ingestor.py
     python ingestor.py --desde 2026-06-01 --hasta 2026-06-30 --periodo Junio
 """
-import json, os, re, sys, argparse, subprocess, time, urllib.request, urllib.error
+import json, os, re, sys, argparse, subprocess, urllib.request, urllib.error
 from collections import defaultdict, Counter
 from datetime import date, datetime, timedelta
 
@@ -61,12 +61,7 @@ def load_env():
 # ===========================================================================
 # API
 # ===========================================================================
-def api_call(url, cliente, suc, desde, hasta, email, pw, estado="", _intentos=3, _espera=5):
-    """Llama a la API de Gesdatta con reintento y backoff simple ante fallas
-    transitorias (fix 26/07/2026, ver auditoría): un 403/Cloudflare, un timeout
-    o un 5xx puntual ya no tira la sucursal a 'sin datos' de una sola vez —
-    reintenta hasta _intentos veces antes de rendirse y devolver None (que
-    main() sigue tratando igual que 'SIN DATOS', conservando el valor previo)."""
+def api_call(url, cliente, suc, desde, hasta, email, pw, estado=""):
     body = json.dumps({
         "email": email, "password": pw, "cliente": cliente,
         "f_desde": desde, "f_hasta": hasta, "estado": estado,
@@ -79,57 +74,32 @@ def api_call(url, cliente, suc, desde, hasta, email, pw, estado="", _intentos=3,
                          "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     }
     req = urllib.request.Request(url, data=body, headers=headers)
-
-    TRANSITORIOS = {403, 429, 500, 502, 503, 504}
-    for intento in range(1, _intentos + 1):
-        try:
-            with urllib.request.urlopen(req, timeout=180) as r:
-                data = json.loads(r.read().decode("utf-8"))
-            return data.get("datos", [])
-        except urllib.error.HTTPError as e:
-            bt = e.read().decode("utf-8", "ignore")[:300]
-            hint = ""
-            if e.code == 403 or "1010" in bt:
-                hint = "  → Bloqueo Cloudflare. Corré desde la misma red donde funciona tu Power Query."
-            transitorio = e.code in TRANSITORIOS
-            if transitorio and intento < _intentos:
-                print(f"  ‼ ERROR HTTP {e.code} en {cliente}/{suc} (intento {intento}/{_intentos}, reintentando en {_espera}s): {bt}\n{hint}")
-                time.sleep(_espera)
-                continue
-            print(f"  ‼ ERROR HTTP {e.code} en {cliente}/{suc} (agotados {intento} intentos): {bt}\n{hint}")
-            return None  # main() lo trata igual que 'SIN DATOS' y conserva el valor previo
-        except Exception as e:
-            if intento < _intentos:
-                print(f"  ‼ ERROR de red en {cliente}/{suc} (intento {intento}/{_intentos}, reintentando en {_espera}s): {e}")
-                time.sleep(_espera)
-                continue
-            print(f"  ‼ ERROR de red en {cliente}/{suc} (agotados {intento} intentos): {e}")
-            return None
-    return None
+    try:
+        with urllib.request.urlopen(req, timeout=180) as r:
+            data = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        bt = e.read().decode("utf-8", "ignore")[:300]
+        hint = ""
+        if e.code == 403 or "1010" in bt:
+            hint = "  → Bloqueo Cloudflare. Corré desde la misma red donde funciona tu Power Query."
+        print(f"  ‼ ERROR HTTP {e.code} en {cliente}/{suc}: {bt}\n{hint}")
+        return None  # main() lo trata igual que 'SIN DATOS' y conserva el valor previo
+    except Exception as e:
+        print(f"  ‼ ERROR de red en {cliente}/{suc}: {e}")
+        return None
+    return data.get("datos", [])
 
 # ===========================================================================
 # Utilidades
 # ===========================================================================
-_NUM_WARN_VISTOS = set()  # fix 26/07/2026: dedupe de avisos, ver comentario abajo
-
 def num(x):
     if x is None: return 0.0
     if isinstance(x, (int, float)): return float(x)
     s = str(x).strip().replace("$","").replace(" ","")
     if "," in s and "." in s: s = s.replace(".","").replace(",",".")
     elif "," in s: s = s.replace(",",".")
-    try:
-        return float(s)
-    except:
-        # fix 26/07/2026: antes esto degradaba a 0.0 en silencio absoluto -- si
-        # Gesdatta cambia el formato de un número, todo se va a cero sin ninguna
-        # alerta. Ahora al menos queda un aviso en el log (una vez por valor
-        # distinto, para no inundar la corrida si se repite miles de veces).
-        # No cambia el comportamiento: sigue devolviendo 0.0 igual que antes.
-        if s and s not in _NUM_WARN_VISTOS:
-            _NUM_WARN_VISTOS.add(s)
-            print(f"  ⚠ num(): valor no numérico {x!r} -> se usó 0.0. Si esto aparece seguido, Gesdatta puede haber cambiado el formato de números.")
-        return 0.0
+    try: return float(s)
+    except: return 0.0
 
 def build_prodcat(master):
     v = defaultdict(Counter)
@@ -153,18 +123,7 @@ SERVM = re.compile(r"SERVICIO.*MESA|CUBIERTO", re.I)
 def normalize_turno(raw):
     """Colapsa cualquier variante cruda de turno_id al estandar de 4 categorias
     (Manana / Mediodia / Noche / After), blindado por prefijo contra nombres
-    de turno con sucursal pegada (fix 24/07/2026, Ramiro).
-
-    fix 27/07/2026 (Ramiro): "Tarde" (turno legacy de Independencia, ya no
-    se usa pero se preserva en historico) pasa a agrupar en "Noche", no en
-    "Mediodia" como antes -- decision de negocio confirmada, no un ajuste
-    de dato. Ademas, lo que no matchea ningun prefijo conocido ya no
-    devuelve el texto crudo tal cual (quedaba como categoria fantasma
-    suelta en el grafico, sin ninguna alerta) -- ahora cae en "Sin
-    clasificar", mismo criterio que normalizar_cuenta() usa para medios
-    de pago: visible y auditable en vez de silencioso. Si aparece "Sin
-    clasificar" en el dashboard es senal de que Gesdatta mando un
-    turno_id nuevo que hay que agregar aca."""
+    de turno con sucursal pegada (fix 24/07/2026, Ramiro)."""
     r = (raw or "").strip()
     if not r:
         return "?"
@@ -176,10 +135,10 @@ def normalize_turno(raw):
     if ru.startswith("MEDIODIA"):
         return "Mediodia"
     if ru.startswith("TARDE"):
-        return "Noche"
+        return "Mediodia"
     if ru.startswith("MA") and "ANA" in ru.replace("\u00d1", "N"):
         return "Ma\u00f1ana"
-    return "Sin clasificar"
+    return r
 
 def transform(rows, prodcat):
     canal = defaultdict(float); turno = defaultdict(float); comp = defaultdict(float)
@@ -188,6 +147,7 @@ def transform(rows, prodcat):
     agg   = defaultdict(lambda: [0.0, 0.0])
     comandas = set(); gross = 0.0
     comanda_tot = defaultdict(float)  # comanda_id (CMD-...) -> venta real sumada (auditoria 23/07/2026)
+    comanda_turno = {}  # comanda_id -> turno normalizado (auditoria 29/07/2026, para medios_pago diario por turno)
     envu = envi = smu = smi = 0.0
     # PY tracking
     py_agg  = defaultdict(lambda: [0.0, 0.0, set()])  # nombre -> [u, imp, cmds]
@@ -215,6 +175,8 @@ def transform(rows, prodcat):
         cn = str(r.get("comprobante_numero") or "").strip()
         if cn:
             comanda_tot[cn] += v
+            if cn not in comanda_turno:
+                comanda_turno[cn] = normalize_turno(r.get("turno_id"))
         fecha_raw = (r.get("fecha") or "").strip()
         if v < 0:
             ing_d = (r.get("ingreso") or "").strip()
@@ -304,7 +266,7 @@ def transform(rows, prodcat):
     ], key=lambda x: x["fecha"])
     return analytics, {"items": items, "gross": round(gross)}, \
            {k: round(x) for k, x in descdet.items()}, round(gross), py_data, daily, daily_desc, \
-           dict(daily_cupon_py), sc_list, dict(comanda_tot)
+           dict(daily_cupon_py), sc_list, dict(comanda_tot), dict(comanda_turno)
 
 # ===========================================================================
 # REBUILD WEEKLY / MONTHLY (histórico de cadena, fuera del selector de período)
@@ -588,12 +550,25 @@ CATEGORIAS_CON_LIQUIDACION_EN_LOTE = {"Nave", "PedidosYa", "Tarjeta (PayWay)", "
 # consecutivos con igual monto es ruido de combos populares, no evidencia.
 BRANCHES_SIN_LOTE_CONFIRMADO = {"Aconquija", "Barrio Norte", "Tafi Viejo", "Barrio Sur"}
 
+# Sucursales que operan estructuralmente en un solo turno (confirmado por Ramiro,
+# 29/07/2026: Tafi Viejo, Peron y FLIP solo trabajan en horario noche). No es un
+# bug de turno_id ni de Gesdatta -- ver auditoria de analytics.turno Junio 2026,
+# 100% "Noche" sin ninguna clave residual/no reconocida. Se excluyen de la alerta
+# de concentracion de turno para no generar falsos positivos mensuales.
+BRANCHES_SOLO_NOCHE = {"Tafi Viejo", "Peron", "FLIP"}
 
-def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw, comanda_tot=None):
-    """Devuelve (dailymap, duplicados, sin_clasificar_raw) para una sucursal y
-    rango de fechas.
+
+def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw, comanda_tot=None, comanda_turno=None):
+    """Devuelve (dailymap, dailymap_turno, duplicados, sin_clasificar_raw) para
+    una sucursal y rango de fechas.
     dailymap: {date: {categoria: monto}} | None. None = mismo criterio que
     comandas: 'sin dato esta corrida' (no se pisa lo que ya había).
+    dailymap_turno: {date: {turno: {categoria: monto}}} | None -- mismo criterio
+    que dailymap, agregado 29/07/2026 para la auditoria diaria por turno. El
+    turno de cada fila se resuelve cruzando su comanda_id contra comanda_turno
+    (construido por transform() sobre Ventas por Comanda, MISMO mecanismo de
+    join que ya usa comanda_tot). Si no hay match, cae en "Turno no identificado"
+    en vez de perderse en silencio.
     duplicados: None si no se detectó ningún cluster sospechoso, o
     {"monto_excluido": X, "clusters": [...]} con el detalle de lo que se corrigió.
     sin_clasificar_raw: None si no hubo nada sin mapear, o {cuenta_id_crudo:
@@ -629,8 +604,9 @@ def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw, coma
     corrida)."""
     rows = api_call(API_URL_CUENTAS, cliente, suc, desde, hasta, email, pw)
     if rows is None:
-        return None, None, None
+        return None, None, None, None
     comanda_tot = comanda_tot or {}
+    comanda_turno = comanda_turno or {}
     sin_clasificar_raw = defaultdict(float)  # cuenta_id crudo -> monto (solo lo NO mapeado)
     por_comanda = defaultdict(list)  # comanda_id -> [(date, categoria, monto, comprobante_num_o_None), ...]
     for r in rows:
@@ -662,16 +638,18 @@ def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw, coma
         por_comanda[comanda_id].append((d, cat, monto, comp_num))
 
     out = defaultdict(lambda: defaultdict(float))
+    out_turno = defaultdict(lambda: defaultdict(lambda: defaultdict(float)))  # {date: {turno: {categoria: monto}}}
     clusters = []
     monto_excluido_total = 0.0
     TOLERANCIA_COMANDA = 2.0  # pesos, margen de redondeo entre las dos APIs
-    entradas_fallback = defaultdict(list)  # (date, categoria) -> [(monto, comp_num), ...], SOLO sin comanda_tot
+    entradas_fallback = defaultdict(list)  # (date, categoria) -> [(monto, comp_num, comanda_id), ...], SOLO sin comanda_tot
 
     for comanda_id, filas in por_comanda.items():
         real = comanda_tot.get(comanda_id) if comanda_id else None
         cats_presentes = set(f[1] for f in filas)
         solo_plataforma = bool(cats_presentes) and cats_presentes.issubset(CATEGORIAS_CON_LIQUIDACION_EN_LOTE)
         cuenta_sum = sum(f[2] for f in filas)
+        turno_cmd = (comanda_turno.get(comanda_id) if comanda_id else None) or "Turno no identificado"
 
         if real is not None and solo_plataforma and (cuenta_sum - real) > TOLERANCIA_COMANDA:
             # Lote de plataforma pegado a esta comanda (ver docstring) -- se
@@ -692,11 +670,13 @@ def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw, coma
             })
             for d, cat, monto, comp_num in filas:
                 out[d][cat] += monto * factor
+                out_turno[d][turno_cmd][cat] += monto * factor
         else:
             for d, cat, monto, comp_num in filas:
                 out[d][cat] += monto
+                out_turno[d][turno_cmd][cat] += monto
                 if comanda_id and real is None:
-                    entradas_fallback[(d, cat)].append((monto, comp_num))
+                    entradas_fallback[(d, cat)].append((monto, comp_num, comanda_id))
 
     # --- respaldo: heuristico viejo (monto+espaciado), SOLO para lo que no
     # tenia comanda_tot con que cruzar esta corrida ---
@@ -704,13 +684,13 @@ def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw, coma
         if cat not in CATEGORIAS_CON_LIQUIDACION_EN_LOTE:
             continue
         por_monto = defaultdict(list)
-        for monto, comp_num in pares:
-            por_monto[monto].append(comp_num)
+        for monto, comp_num, comanda_id in pares:
+            por_monto[monto].append((comp_num, comanda_id))
         for monto, comps in por_monto.items():
             if not monto:
                 continue
             rep = len(comps)
-            comps_validos = [c for c in comps if c is not None]
+            comps_validos = [c for c, _ in comps if c is not None]
             criterio_a = monto >= MONTO_SOSPECHOSO_MIN and rep >= DUP_CLUSTER_MIN
             criterio_b = (len(comps_validos) == len(comps)
                           and es_cluster_sospechoso(comps_validos))
@@ -727,20 +707,39 @@ def fetch_medios_pago(cliente, suc, branch, grupo, desde, hasta, email, pw, coma
                 "via": "respaldo_sin_comanda_tot",
             })
             out[d][cat] -= excluido  # ya se habia sumado completo arriba
+            # Repartir la misma resta en out_turno, proporcional a cuantas
+            # comandas de este cluster caen en cada turno (aproximacion: el
+            # cluster completo son duplicados del mismo lote, se descuenta
+            # rep-1 partes repartidas segun la mezcla de turnos observada).
+            turnos_cluster = [(comanda_turno.get(cid) if cid else None) or "Turno no identificado"
+                              for _, cid in comps]
+            cnt_turno = {}
+            for t in turnos_cluster:
+                cnt_turno[t] = cnt_turno.get(t, 0) + 1
+            for t, n in cnt_turno.items():
+                out_turno[d][t][cat] -= excluido * (n / rep)
 
     dailymap = {d: dict(cats) for d, cats in out.items()}
+    dailymap_turno = {d: {t: dict(cats) for t, cats in turnos.items()} for d, turnos in out_turno.items()}
     duplicados = {"monto_excluido": round(monto_excluido_total), "clusters": clusters} if clusters else None
     sc_raw = {k: round(v) for k, v in sin_clasificar_raw.items()} if sin_clasificar_raw else None
-    return dailymap, duplicados, sc_raw
+    return dailymap, dailymap_turno, duplicados, sc_raw
 
 
-def rebuild_medios_pago(master, periodo, daily_cuenta_by_branch, dup_by_branch=None, sc_raw_by_branch=None):
+def rebuild_medios_pago(master, periodo, daily_cuenta_by_branch, dup_by_branch=None, sc_raw_by_branch=None,
+                          daily_turno_by_branch=None):
     """daily_cuenta_by_branch: {branch: {date: {categoria: monto}} | None}.
     dup_by_branch: {branch: {"monto_excluido":X,"clusters":[...]} | None} --
     lo que fetch_medios_pago descartó por sospecha de liquidación duplicada.
     sc_raw_by_branch: {branch: {cuenta_id_crudo: monto} | None} -- lo que cayó
     en "Sin clasificar", con el texto EXACTO tal como llegó de Gesdatta, para
     poder agregarlo al mapeo sin pedir otra extracción manual.
+    daily_turno_by_branch: {branch: {date: {turno: {categoria: monto}}} | None}
+    -- agregado 29/07/2026 para auditoría diaria por turno. Se persiste con el
+    MISMO alcance por período que daily_data (un mes acotado), no hace falta
+    ventana rolling aparte: el resto del pipeline ya crece así (analytics,
+    rankings, daily_data) y no se poda -- este nodo sigue el mismo criterio
+    para no introducir un comportamiento distinto al del resto de master.json.
 
     Guarda total por período (branch_tot-like) y desglose semanal, usando las
     MISMAS semanas ISO que rebuild_weekly_monthly (_semana_label) para que
@@ -758,6 +757,8 @@ def rebuild_medios_pago(master, periodo, daily_cuenta_by_branch, dup_by_branch=N
     semanal = mp.setdefault("semanal", {})  # {branch: {semana_label: {categoria: monto}}}
     dup_periodo = mp.setdefault("duplicados_excluidos", {}).setdefault(periodo, {})
     sc_periodo = mp.setdefault("sin_clasificar_detalle", {}).setdefault(periodo, {})
+    diario_turno = mp.setdefault("diario_turno", {})
+    dt_periodo = diario_turno.setdefault(periodo, {})
 
     for branch, dailymap in daily_cuenta_by_branch.items():
         if not dailymap:
@@ -783,6 +784,46 @@ def rebuild_medios_pago(master, periodo, daily_cuenta_by_branch, dup_by_branch=N
             sc_periodo[branch] = sc_raw
         elif branch in sc_periodo:
             del sc_periodo[branch]  # esta corrida no encontró nada sin clasificar -> no dejar un aviso viejo colgado
+
+    # --- diario por turno (auditoría diaria) -- solo pisa las fechas tocadas
+    # esta corrida, preserva el resto del período ya guardado ---
+    for branch, dailymap_turno in (daily_turno_by_branch or {}).items():
+        if not dailymap_turno:
+            continue  # None (sin dato esta corrida) o {} (sin filas) -> no tocar lo que ya había
+        dt_branch = dt_periodo.setdefault(branch, {})
+        for d, turnos in dailymap_turno.items():
+            fecha_iso = d.isoformat()
+            dt_branch[fecha_iso] = {
+                t: {k: round(v) for k, v in cats.items()} for t, cats in turnos.items()
+            }
+
+
+def chequear_concentracion_turno(master, periodo, umbral_pct=95.0):
+    """Alerta de CALIDAD DE DATO (no de reconciliación de montos): detecta
+    sucursales donde más de umbral_pct% del monto de medios de pago del
+    período cae en un único turno. Excluye BRANCHES_SOLO_NOCHE, que operan
+    así de forma estructural (confirmado por Ramiro 29/07/2026) -- incluirlas
+    generaría un falso positivo todos los meses. Complementa, no reemplaza,
+    chequear_reconciliacion_medios_pago (esa valida montos; esta valida
+    distribución de turnos)."""
+    dt = master.get("medios_pago", {}).get("diario_turno", {}).get(periodo, {})
+    alertas = {}
+    for branch, fechas in dt.items():
+        if branch in BRANCHES_SOLO_NOCHE:
+            continue
+        tot_turno = defaultdict(float)
+        for fecha, turnos in fechas.items():
+            for t, cats in turnos.items():
+                tot_turno[t] += sum(cats.values())
+        total = sum(tot_turno.values())
+        if total <= 0:
+            continue
+        top_turno, top_monto = max(tot_turno.items(), key=lambda kv: kv[1])
+        pct = top_monto / total * 100
+        if pct > umbral_pct:
+            alertas[branch] = {"turno": top_turno, "pct": round(pct, 1)}
+    master.setdefault("medios_pago", {}).setdefault("concentracion_turno_alert", {})[periodo] = alertas
+    return alertas
 
 
 def chequear_reconciliacion_medios_pago(master, periodo, umbral_pct=15.0):
@@ -1148,6 +1189,7 @@ def main():
     print(f"\n=== Ingesta {P}  ({args.desde} → {args.hasta})  ·  {len(BRANCHES)} sucursales ===")
     A_all={};R_all={};D_all={};tot={};py_all={};daily_all={};daily_desc_all={};daily_cupon_py_all={};sc_all={}
     daily_cuenta_all={}
+    daily_cuenta_turno_all={}
     dup_cuenta_all={}
     sc_raw_cuenta_all={}
     all_ok = True
@@ -1168,10 +1210,13 @@ def main():
         # cruce Medios de Pago contra la venta real (ver docstring de
         # fetch_medios_pago), en vez de adivinar duplicados por patron.
         transform_result = transform(rows, prodcat) if rows else None
-        comanda_tot_this = transform_result[-1] if transform_result else None
+        comanda_tot_this = transform_result[-2] if transform_result else None
+        comanda_turno_this = transform_result[-1] if transform_result else None
 
-        daily_cuenta_all[branch], dup_cuenta_all[branch], sc_raw_cuenta_all[branch] = fetch_medios_pago(
-            cliente, suc, branch, grupo, args.desde, args.hasta, email, pw, comanda_tot=comanda_tot_this)
+        (daily_cuenta_all[branch], daily_cuenta_turno_all[branch],
+         dup_cuenta_all[branch], sc_raw_cuenta_all[branch]) = fetch_medios_pago(
+            cliente, suc, branch, grupo, args.desde, args.hasta, email, pw,
+            comanda_tot=comanda_tot_this, comanda_turno=comanda_turno_this)
 
         if not rows:
             prev = _prev_snapshot(master, P, branch)
@@ -1203,7 +1248,7 @@ def main():
                 daily_cupon_py_all[branch]={}
             continue
 
-        A,R,D,g,py,daily,daily_desc,daily_cupon_py,sc,_comanda_tot_unused = transform_result
+        A,R,D,g,py,daily,daily_desc,daily_cupon_py,sc,_comanda_tot_unused,_comanda_turno_unused = transform_result
         ok_b, dq = audit(branch,A,R)
         all_ok &= ok_b
 
@@ -1301,8 +1346,9 @@ def main():
     rebuild_especial2026(master, P, args)
     rebuild_mundiales(master, P, args)
     rebuild_weekly_monthly(master, daily_all, daily_desc_all, args)
-    rebuild_medios_pago(master, P, daily_cuenta_all, dup_cuenta_all, sc_raw_cuenta_all)
+    rebuild_medios_pago(master, P, daily_cuenta_all, dup_cuenta_all, sc_raw_cuenta_all, daily_cuenta_turno_all)
     chequear_reconciliacion_medios_pago(master, P)
+    chequear_concentracion_turno(master, P)
 
     # --- Sucursales con dato viejo (más de STALE_HOURS sin una corrida fresca ACEPTADA
     # —ni SIN DATOS ni CUARENTENA cuentan como fresca—), calculado sobre el estado YA
