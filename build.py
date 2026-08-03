@@ -296,24 +296,51 @@ function insight(c,t,d){return '<div class="rounded-lg p-3" style="background:#f
 function promoHero(img,name,sub,pos){return '<div class="promoHero mb-4" style="position:relative;height:144px;border-radius:1.1rem;overflow:hidden;border:1px solid var(--line)"><img src="'+img+'" style="width:100%;height:100%;object-fit:cover;object-position:'+(pos||'center 58%')+';display:block"/><div style="position:absolute;inset:0;background:linear-gradient(90deg,rgba(10,14,30,.82) 0%,rgba(10,14,30,.46) 55%,rgba(10,14,30,.12) 100%)"></div><div style="position:absolute;left:22px;bottom:18px;right:18px"><div style="color:#fff;font-size:22px;font-weight:800;letter-spacing:-.01em;text-shadow:0 2px 8px rgba(0,0,0,.45);line-height:1.1">'+name+'</div><div style="color:rgba(255,255,255,.92);font-size:13px;font-weight:600;margin-top:3px;text-shadow:0 1px 4px rgba(0,0,0,.5)">'+sub+'</div></div></div>';}
 const RENDER={};
 
+let resScope='ALL';
 RENDER.resumen=()=>{
  const bt=DATA.branch_tot[PERIOD],g=DATA.groups[PERIOD],pm=DATA.period_meta[PERIOD];
- const ranked=pbranches().map(b=>({b,v:bt[b]})).sort((a,b)=>b.v-a.v);const maxb=ranked[0].v;
- const tks=pbranches().map(b=>DATA.analytics[PERIOD][b].ticket);const tkAvg=Math.round(tks.reduce((a,b)=>a+b,0)/tks.length);
- const topShare=ranked[0].v/g.Total*100;
- const turAll=mergeDict(pbranches(),'turno');const turTot=Object.values(turAll).reduce((a,b)=>a+b,0)||1;const noche=(turAll.Noche||0)/turTot*100;
- const canAll=mergeDict(pbranches(),'canal');const canTot=Object.values(canAll).reduce((a,b)=>a+b,0)||1;const peya=(canAll['PEDIDOS YA']||0)/canTot*100;
- const rr=pm.parcial?'<div class="text-[12px] mt-1" style="color:var(--mut)">Proyección a 30 días: <b>'+Fm(g.Total/pm.dias*30)+'</b></div>':'';
- const periodDesc=pbranches().reduce((s,b)=>s+Math.abs(DATA.analytics[PERIOD][b].descuentos),0);
- const neto=g.Total-periodDesc;const descPct=periodDesc/g.Total*100;
- let kpis=kpi('Facturación bruta',Fm(g.Total),pm.parcial?pm.dias+' días · '+pbranches().length+' suc.':'mes · '+pbranches().length+' suc.',undefined,'#E2001A')+
+ const allBr=pbranches();
+ const srlBr=allBr.filter(b=>SRL.indexOf(b)>=0);
+ const franqBr=allBr.filter(b=>SRL.indexOf(b)<0);
+ if(resScope==='FRANQ'&&franqBr.length===0)resScope='ALL';
+ const scopeBr=resScope==='ALL'?allBr:(resScope==='SRL'?srlBr:franqBr);
+ const scopeLabel=resScope==='ALL'?'Todas las sucursales':(resScope==='SRL'?'LENO SRL':'Franquicias');
+ const franqDisabled=franqBr.length===0;
+ const tgBtn=(val,label)=>{const active=resScope===val,disabled=val==='FRANQ'&&franqDisabled;
+   const style=active?'background:#E2001A;color:#fff':(disabled?'color:#c3c7d0;cursor:not-allowed':'color:#3b414e;cursor:pointer');
+   const onclick=disabled?'':' onclick=\"resScope=\'\'+val+\'\';RENDER.resumen()\"';
+   return '<div class=\"px-3 py-1.5\"'+onclick+' style=\"'+style+'\"'+(disabled?' title=\"Sin franquicias este período\"':'')+'>'+label+'</div>';};
+ const scopeToggle='<div class=\"flex items-center justify-end mb-1\"><div class=\"flex rounded-lg overflow-hidden text-xs border font-semibold\" style=\"border-color:var(--line)\">'+tgBtn('ALL','Todas')+tgBtn('SRL','LENO SRL')+tgBtn('FRANQ','Franquicias')+'</div></div>'+
+   (franqDisabled?'<div class=\"text-[12px] mb-3 px-3 py-2 rounded-lg\" style=\"background:#fff7ed;border:1px solid #fed7aa;color:#9a3412\">Franquicias deshabilitado: '+PERIOD+' no tiene sucursales de franquicia cargadas todavía.</div>':'');
+ const rankedAll=allBr.map(b=>({b,v:bt[b]})).sort((a,b)=>b.v-a.v);
+ const ranked=scopeBr.map(b=>({b,v:bt[b]})).sort((a,b)=>b.v-a.v);const maxb=ranked.length?ranked[0].v:1;
+ const tks=scopeBr.map(b=>DATA.analytics[PERIOD][b].ticket);const tkAvg=tks.length?Math.round(tks.reduce((a,b)=>a+b,0)/tks.length):0;
+ const topShare=rankedAll.length?rankedAll[0].v/g.Total*100:0;
+ const turAll=mergeDict(allBr,'turno');const turTot=Object.values(turAll).reduce((a,b)=>a+b,0)||1;const noche=(turAll.Noche||0)/turTot*100;
+ const canAll=mergeDict(allBr,'canal');const canTot=Object.values(canAll).reduce((a,b)=>a+b,0)||1;const peya=(canAll['PEDIDOS YA']||0)/canTot*100;
+ const scopeGross=resScope==='ALL'?g.Total:(resScope==='SRL'?g.SRL:g.Franquicias);
+ const periodDesc=scopeBr.reduce((s,b)=>s+Math.abs(DATA.analytics[PERIOD][b].descuentos),0);
+ const neto=scopeGross-periodDesc;const descPct=scopeGross?periodDesc/scopeGross*100:0;
+ const rr=pm.parcial?'<div class=\"text-[12px] mt-1\" style=\"color:var(--mut)\">Proyección a 30 días: <b>'+Fm(scopeGross/pm.dias*30)+'</b></div>':'';
+ let kpis=kpi('Facturación bruta',Fm(scopeGross),pm.parcial?pm.dias+' días · '+scopeBr.length+' suc.':'mes · '+scopeBr.length+' suc.',undefined,'#E2001A')+
    kpi('Descuentos','−'+Fm(periodDesc),descPct.toFixed(1)+'% sobre bruto',undefined,'#e11d48')+
    kpi('Facturación NETA',Fm(neto),'bruto − descuentos',undefined,'#16a34a')+
-   kpi('Ticket promedio',F(tkAvg),'por comanda',undefined,'#2563eb');
- const strip='<div class="card p-4 mt-4 flex flex-wrap items-center text-sm" style="gap:.5rem 2rem">'+
-   '<div><span style="color:var(--mut)">Propias (SRL): </span><b>'+Fm(g.SRL)+'</b></div>'+
-   (g.Franquicias>0?'<div><span style="color:var(--mut)">Franquicias: </span><b>'+Fm(g.Franquicias)+'</b></div>':'')+
-   '<div class="flex items-center gap-2"><span style="color:var(--mut)">Resultado:</span> <b>'+Fm(g.Total)+'</b> <span style="color:#e11d48">− '+Fm(periodDesc)+'</span> <span style="color:var(--mut)">=</span> <b style="color:#16a34a">'+Fm(neto)+' neto</b></div></div>';
+   kpi('Ticket promedio',tkAvg?F(tkAvg):'—','por comanda',undefined,'#2563eb');
+ let strip;
+ if(resScope==='ALL'){
+  strip='<div class=\"card p-4 mt-4 flex flex-wrap items-center text-sm\" style=\"gap:.5rem 2rem\">'+
+   '<div><span style=\"color:var(--mut)\">Propias (SRL): </span><b>'+Fm(g.SRL)+'</b></div>'+
+   (g.Franquicias>0?'<div><span style=\"color:var(--mut)\">Franquicias: </span><b>'+Fm(g.Franquicias)+'</b></div>':'')+
+   '<div class=\"flex items-center gap-2\"><span style=\"color:var(--mut)\">Resultado:</span> <b>'+Fm(g.Total)+'</b> <span style=\"color:#e11d48\">− '+Fm(periodDesc)+'</span> <span style=\"color:var(--mut)\">=</span> <b style=\"color:#16a34a\">'+Fm(neto)+' neto</b></div></div>';
+ } else {
+  const otroLabel=resScope==='SRL'?'Franquicias':'LENO SRL';
+  const otroTotal=resScope==='SRL'?g.Franquicias:g.SRL;
+  const pctCadena=g.Total?(scopeGross/g.Total*100).toFixed(1):'0';
+  strip='<div class=\"card p-4 mt-4 flex flex-wrap items-center text-sm\" style=\"gap:.5rem 2rem\">'+
+   '<div><span style=\"color:var(--mut)\">Grupo: </span><b>'+scopeLabel+' ('+scopeBr.length+' sucursales)</b></div>'+
+   '<div><span style=\"color:var(--mut)\">'+otroLabel+' (fuera de esta vista): </span><b>'+Fm(otroTotal)+'</b></div>'+
+   '<div><span style=\"color:var(--mut)\">% de la cadena: </span><b>'+pctCadena+'%</b></div></div>';
+ }
  const dq=DATA.data_quality&&DATA.data_quality[PERIOD]||{};
  const dqBrs=Object.keys(dq);
  const cuarentena=DATA.quarantine&&DATA.quarantine[PERIOD]||{};
@@ -382,17 +409,17 @@ RENDER.resumen=()=>{
    }
   }
  const el=document.getElementById('sec-resumen');
- el.innerHTML='<div class="grid grid-cols-1 md:grid-cols-4 gap-4">'+kpis+'</div>'+rr+strip+dqCard+cmp+
+ el.innerHTML=scopeToggle+'<div class="grid grid-cols-1 md:grid-cols-4 gap-4">'+kpis+'</div>'+rr+strip+dqCard+cmp+
   '<div class="card p-5 mt-4"><div class="font-semibold mb-3">🔔 Alertas & Insights</div><div class="grid md:grid-cols-2 gap-3 text-[13px]">'+
-   insight('#E2001A','Concentración','<b>'+ranked[0].b+'</b> genera el <b>'+topShare.toFixed(0)+'%</b> del total del período. Punto único de falla: vigilar de cerca.')+
+   insight('#E2001A','Concentración','<b>'+rankedAll[0].b+'</b> genera el <b>'+topShare.toFixed(0)+'%</b> del total del período (cadena completa). Punto único de falla: vigilar de cerca.')+
    insight('#8b5cf6','Dependencia horaria','La <b>Noche</b> concentra el <b>'+noche.toFixed(0)+'%</b> de la venta. Mediodía y After, subexplotados.')+
    insight('#FA0050','Delivery','PedidosYa = <b>'+peya.toFixed(0)+'%</b> del canal. Comisión de plataforma a contrastar contra LENO+.')+
    insight('#f59e0b','Margen','El panel mide facturación, no rentabilidad. Sin costos/comisiones no hay lectura de margen (mejora pendiente).')+
   '</div></div>'+
-  '<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4"><div class="card p-5 lg:col-span-2"><div class="font-semibold mb-1">Evolución semanal · Total cadena (histórico)</div><div class="text-[12px] mb-3" style="color:var(--mut)">'+rangoSemanalChip()+' · independiente del período seleccionado</div><canvas id="cRes" height="110"></canvas></div>'+
-   '<div class="card p-5"><div class="font-semibold mb-3">Mix por sucursal</div><canvas id="cMix" height="190"></canvas></div></div>'+
-  '<div class="card p-5 mt-4"><div class="font-semibold mb-1">Ranking de sucursales · '+pm.label+'</div><div class="text-[12px] mb-4" style="color:var(--mut)">Tocá una sucursal para ver su detalle</div>'+
-   ranked.map((r,i)=>'<div class="click flex items-center gap-3 mb-2 p-1.5 rounded-lg" onclick="branchModal(\''+r.b+'\')"><span class="w-7 text-center font-bold">'+(i===0?CROWN:'<span style=\"color:var(--mut)\">'+(i+1)+'</span>')+'</span><span class="w-36 text-sm shrink-0">'+r.b+' '+(SRL.indexOf(r.b)>=0?'<span class=\"badge\" style=\"background:#dbeafe;color:#2563eb\">SRL</span>':'<span class=\"badge\" style=\"background:#fef3c7;color:#b45309\">FR</span>')+'</span><div class="flex-1 h-7 rounded-lg overflow-hidden" style="background:#f0f1f4"><div class="h-full flex items-center justify-end pr-2 text-[11px] font-bold text-white" style="width:'+(r.v/maxb*100)+'%;background:'+PAL[i%PAL.length]+'">'+Fm(r.v)+'</div></div></div>').join('')+'</div>';
+  '<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4"><div class="card p-5 lg:col-span-2"><div class="font-semibold mb-1">Evolución semanal · Total cadena (histórico)</div><div class="text-[12px] mb-3" style="color:var(--mut)">'+rangoSemanalChip()+' · independiente del período y del filtro de grupo seleccionados</div><canvas id="cRes" height="110"></canvas></div>'+
+   '<div class="card p-5"><div class="font-semibold mb-3">Mix por sucursal'+(resScope==='ALL'?'':' · '+scopeLabel)+'</div><canvas id="cMix" height="190"></canvas></div></div>'+
+  '<div class="card p-5 mt-4"><div class="font-semibold mb-1">Ranking de sucursales · '+pm.label+(resScope==='ALL'?'':' · '+scopeLabel)+'</div><div class="text-[12px] mb-4" style="color:var(--mut)">Tocá una sucursal para ver su detalle</div>'+
+   (ranked.length?ranked.map((r,i)=>'<div class="click flex items-center gap-3 mb-2 p-1.5 rounded-lg" onclick="branchModal(\''+r.b+'\')"><span class="w-7 text-center font-bold">'+(i===0?CROWN:'<span style=\"color:var(--mut)\">'+(i+1)+'</span>')+'</span><span class="w-36 text-sm shrink-0">'+r.b+' '+(SRL.indexOf(r.b)>=0?'<span class=\"badge\" style=\"background:#dbeafe;color:#2563eb\">SRL</span>':'<span class=\"badge\" style=\"background:#fef3c7;color:#b45309\">FR</span>')+'</span><div class="flex-1 h-7 rounded-lg overflow-hidden" style="background:#f0f1f4"><div class="h-full flex items-center justify-end pr-2 text-[11px] font-bold text-white" style="width:'+(r.v/maxb*100)+'%;background:'+PAL[i%PAL.length]+'">'+Fm(r.v)+'</div></div></div>').join(''):'<div class="text-sm" style="color:var(--mut)">Sin sucursales para este grupo en el período seleccionado.</div>')+'</div>';
  const wk=DATA.weekly;
  mkChart('cRes',{type:'line',data:{labels:wk.map(w=>w.semana.split(' al ')[0]),datasets:[{data:wk.map(w=>wkVal(w,'Total').v),borderColor:'#E2001A',backgroundColor:c=>{const x=c.chart.ctx.createLinearGradient(0,0,0,200);x.addColorStop(0,'rgba(226,0,26,.18)');x.addColorStop(1,'rgba(226,0,26,0)');return x;},fill:true,tension:.4,pointRadius:0,borderWidth:2.5}]},options:{interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>'Total: '+F(c.raw)}}},scales:{y:{ticks:{callback:v=>'$'+(v/1e6).toFixed(0)+'M'},grid:{color:LINE}},x:{grid:{display:false}}}}});
  mkChart('cMix',{type:'doughnut',data:{labels:ranked.map(r=>r.b),datasets:[{data:ranked.map(r=>r.v),backgroundColor:ranked.map((r,i)=>PAL[i%PAL.length]),borderWidth:0}]},options:{cutout:'60%',plugins:{legend:{position:'bottom',labels:{padding:8,boxWidth:10,font:{size:10}}},tooltip:{callbacks:{label:c=>c.label+': '+Fm(c.raw)}}}}});
