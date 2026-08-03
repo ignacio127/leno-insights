@@ -308,7 +308,7 @@ RENDER.resumen=()=>{
  const franqDisabled=franqBr.length===0;
  const tgBtn=(val,label)=>{const active=resScope===val,disabled=val==='FRANQ'&&franqDisabled;
    const style=active?'background:#E2001A;color:#fff':(disabled?'color:#c3c7d0;cursor:not-allowed':'color:#3b414e;cursor:pointer');
-   const onclick=disabled?'':' onclick=\"resScope=\'\'+val+\'\';RENDER.resumen()\"';
+   const onclick=disabled?'':' onclick="resScope=\''+val+'\';RENDER.resumen()"';
    return '<div class=\"px-3 py-1.5\"'+onclick+' style=\"'+style+'\"'+(disabled?' title=\"Sin franquicias este período\"':'')+'>'+label+'</div>';};
  const scopeToggle='<div class=\"flex items-center justify-end mb-1\"><div class=\"flex rounded-lg overflow-hidden text-xs border font-semibold\" style=\"border-color:var(--line)\">'+tgBtn('ALL','Todas')+tgBtn('SRL','LENO SRL')+tgBtn('FRANQ','Franquicias')+'</div></div>'+
    (franqDisabled?'<div class=\"text-[12px] mb-3 px-3 py-2 rounded-lg\" style=\"background:#fff7ed;border:1px solid #fed7aa;color:#9a3412\">Franquicias deshabilitado: '+PERIOD+' no tiene sucursales de franquicia cargadas todavía.</div>':'');
