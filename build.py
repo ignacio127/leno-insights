@@ -371,30 +371,38 @@ RENDER.resumen=()=>{
    const common=brCur.filter(b=>brPrev.indexOf(b)>=0);
    const full=SRL.concat(FR);
    const usaTotal=full.every(b=>common.indexOf(b)>=0);
-   const scope=usaTotal?full:SRL;
-   const scopeLabel=usaTotal?'Total cadena (7 sucursales, presentes en ambos períodos)':'solo SRL ('+scope.length+' sucursales presentes en ambos períodos)';
-   const agg=per=>{const A=DATA.analytics[per];let gr=0,d=0,c=0;scope.forEach(b=>{if(A[b]){gr+=A[b].gross;d+=Math.abs(A[b].descuentos);c+=A[b].comandas;}});const dd=DATA.period_meta[per].dias;return{brutoDia:gr/dd,netoDia:(gr-d)/dd,ticket:gr/Math.max(c,1),descPct:d/gr*100};};
+   let cmpBrs,cmpScopeLabel,cmpShort,cmpEmpty=false;
+   if(resScope==='SRL'){
+     cmpBrs=common.filter(b=>SRL.indexOf(b)>=0);
+     cmpShort='SRL';
+     cmpScopeLabel='LENO SRL ('+cmpBrs.length+' sucursales presentes en ambos períodos)';
+   } else if(resScope==='FRANQ'){
+     cmpBrs=common.filter(b=>FR.indexOf(b)>=0);
+     cmpShort='Franquicias';
+     cmpEmpty=cmpBrs.length===0;
+     cmpScopeLabel=cmpEmpty?'':('Franquicias ('+cmpBrs.length+' sucursales presentes en ambos períodos)');
+   } else {
+     cmpBrs=usaTotal?full:SRL;
+     cmpShort=usaTotal?'Total':'SRL';
+     cmpScopeLabel=usaTotal?'Total cadena (7 sucursales, presentes en ambos períodos)':'solo SRL ('+cmpBrs.length+' sucursales presentes en ambos períodos)';
+   }
+   if(cmpEmpty){
+    cmp='<div class="card p-5 mt-4"><div class="font-semibold mb-1">📊 Comparación vs mes anterior · '+prev+'</div><div class="text-[13px] mt-2" style="color:var(--mut)">Franquicias no tiene datos comparables entre '+prev+' y '+PERIOD+': al menos uno de los dos meses no tenía sucursales de franquicia cargadas todavía. Elegí "Todas" o "LENO SRL" para ver esta comparación.</div></div>';
+   } else {
+   const agg=per=>{const A=DATA.analytics[per];let gr=0,d=0,c=0;cmpBrs.forEach(b=>{if(A[b]){gr+=A[b].gross;d+=Math.abs(A[b].descuentos);c+=A[b].comandas;}});const dd=DATA.period_meta[per].dias;return{brutoDia:gr/dd,netoDia:(gr-d)/dd,ticket:gr/Math.max(c,1),descPct:d/gr*100};};
    const cu=agg(PERIOD),pr=agg(prev);
    const row=(lbl,cv,pv,fmt,inv)=>{const dl=(cv/pv-1)*100,up=dl>=0,good=inv?!up:up;return '<tr style="border-top:1px solid var(--line)"><td class="py-2 pr-3">'+lbl+'</td><td class="py-2 px-3 text-right font-semibold">'+fmt(cv)+'</td><td class="py-2 px-3 text-right" style="color:var(--mut)">'+fmt(pv)+'</td><td class="py-2 px-3 text-right"><span class="badge" style="background:'+(good?'#dcfce7':'#fee2e2')+';color:'+(good?'#16a34a':'#e11d48')+'">'+(up?'▲':'▼')+' '+Math.abs(dl).toFixed(1)+'%</span></td></tr>';};
-   // Aviso de baja confiabilidad: si el período actual recién empezó (pocos días
-   // transcurridos y todavía en curso), comparar su promedio/día contra el promedio
-   // de un mes YA CERRADO sobreestima la caída, porque el día de hoy puede seguir
-   // sumando ventas después de esta corrida. No intentamos "corregir" el número con
-   // una proyección — avisamos para que no se lea como una caída real todavía.
    const diasCur=DATA.period_meta[PERIOD].dias;
    const pocosDias=DATA.period_meta[PERIOD].parcial && diasCur<=5;
    const avisoPocosDias=pocosDias?('<div class="text-[12px] mt-3 px-4 py-2.5 rounded-lg flex gap-2" style="background:#fef2f2;border:1px solid #fecaca;color:#991b1b">⚠️ <span><b>'+PERIOD+' lleva solo '+diasCur+' día'+(diasCur===1?'':'s')+' transcurrido'+(diasCur===1?'':'s')+'.</b> Comparar el promedio diario de un mes recién empezado (y todavía en curso) contra '+prev+' —ya cerrado— va a mostrar una caída más grande de la real. Esperá a tener al menos 5–7 días para leer esta tabla con confianza.</span></div>'):'';
-   cmp='<div class="card p-5 mt-4"><div class="font-semibold mb-1">📊 Comparación vs mes anterior · '+prev+'</div><div class="text-[12px] mb-3" style="color:var(--mut)">Base comparable: '+scopeLabel+'. Todas las cifras son <b>por día</b> (no por mes) para poder comparar meses parciales con meses completos.</div><div style="overflow-x:auto"><table class="text-sm w-full"><thead><tr class="text-[12px] text-left" style="color:var(--mut)"><th class="py-2 pr-3">Métrica ('+(usaTotal?'Total':'SRL')+') · por día</th><th class="py-2 px-3 text-right">'+PERIOD+'</th><th class="py-2 px-3 text-right">'+prev+'</th><th class="py-2 px-3 text-right">Δ</th></tr></thead><tbody>'+
+   cmp='<div class="card p-5 mt-4"><div class="font-semibold mb-1">📊 Comparación vs mes anterior · '+prev+'</div><div class="text-[12px] mb-3" style="color:var(--mut)">Base comparable: '+cmpScopeLabel+'. Todas las cifras son <b>por día</b> (no por mes) para poder comparar meses parciales con meses completos.</div><div style="overflow-x:auto"><table class="text-sm w-full"><thead><tr class="text-[12px] text-left" style="color:var(--mut)"><th class="py-2 pr-3">Métrica ('+cmpShort+') · por día</th><th class="py-2 px-3 text-right">'+PERIOD+'</th><th class="py-2 px-3 text-right">'+prev+'</th><th class="py-2 px-3 text-right">Δ</th></tr></thead><tbody>'+
      row('Facturación bruta / día',cu.brutoDia,pr.brutoDia,Fm)+row('Facturación neta / día',cu.netoDia,pr.netoDia,Fm)+row('Ticket promedio',cu.ticket,pr.ticket,F)+row('Descuentos % s/ bruto',cu.descPct,pr.descPct,v=>v.toFixed(1)+'%',true)+
-     '</tbody></table></div>'+avisoPocosDias+(usaTotal?'':note('Se compara solo SRL porque '+prev+' no tiene datos de Franquicias cargados. El total bruto de arriba sí incluye todas las sucursales del período.'))+'</div>';
+     '</tbody></table></div>'+avisoPocosDias+(resScope==='ALL'&&!usaTotal?note('Se compara solo SRL porque '+prev+' no tiene datos de Franquicias cargados. El total bruto de arriba sí incluye todas las sucursales del período.'):'')+'</div>';
 
-   // Alerta de volumen: comandas/día cae mientras el ticket compensa (no se ve en
-   // la venta total). Se salta si el período recién empezó (mismo guardrail que
-   // avisoPocosDias) para no marcar como caída algo que es solo un mes incompleto.
    if(!pocosDias){
     const UMBRAL_VOL_CAIDA=10;
     const diasPrev=DATA.period_meta[prev].dias;
-    const filasVol=common.map(b=>{
+    const filasVol=cmpBrs.map(b=>{
      const aCur=DATA.analytics[PERIOD][b],aPrev=DATA.analytics[prev][b];
      if(!aCur||!aPrev||!aPrev.comandas) return null;
      const cCur=aCur.comandas/diasCur,cPrev=aPrev.comandas/diasPrev;
@@ -406,6 +414,7 @@ RENDER.resumen=()=>{
       filasVol.map(x=>insight('#e11d48',x.b,'Comandas/día: <b>'+x.cPrev.toFixed(1)+' → '+x.cCur.toFixed(1)+'</b> ('+x.dCmd.toFixed(1)+'%) · Ticket: <b>'+F(x.tkPrev)+' → '+F(x.tkCur)+'</b> ('+(x.dTk>=0?'+':'')+x.dTk.toFixed(1)+'%)')).join('')+
       '</div></div>';
     }
+   }
    }
   }
  const el=document.getElementById('sec-resumen');
