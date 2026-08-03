@@ -289,9 +289,26 @@ def rebuild_weekly_monthly(master, daily_by_branch, daily_desc_by_branch, args):
     """daily_by_branch: {branch: {date: gross}}. daily_desc_by_branch: {branch: {date: descuento (neg.)}}.
     Recalcula semanas y meses que caen dentro del rango consultado; preserva todo lo anterior.
     Si una sucursal no respondió en esta corrida (SIN DATOS), su valor
-    previo en esa semana/mes se mantiene en vez de pisarse con 0."""
-    weeks  = defaultdict(lambda: defaultdict(float))   # semana_label -> {branch_key: imp}
-    weeks_desc = defaultdict(lambda: defaultdict(float))   # semana_label -> {branch_key: desc}
+    previo en esa semana/mes se mantiene en vez de pisarse con 0.
+
+    AUDITORIA 03/08/2026 (Ramiro, confirmado contra Gesdatta real): la version
+    anterior de esta funcion armaba "weekly" mergeando incrementalmente solo
+    los dias tocados en ESTA corrida (acotados a --desde/--hasta del periodo
+    actual). Cuando una semana ISO cruza un fin de mes (ej. "27.07 al 02.08"),
+    la corrida del mes siguiente (ej. Agosto, 2-3 dias) PISABA con el total
+    completo que la corrida del mes anterior (Julio, 5 dias) ya habia dejado
+    bien -- perdiendo esos dias para siempre en cada corrida futura (el cron
+    corre 3 veces por dia, Julio primero y Agosto despues, asi que Agosto
+    siempre terminaba ganando). Confirmado: Independencia esa semana daba
+    $12.506.730 en master.json (exactamente el total de Agosto 1-2 solo) vs
+    $27.725.236 real en Gesdatta.
+
+    Fix: "weekly" ya NO se arma por merge incremental. Se reconstruye desde
+    cero sumando "daily_data" (que si esta mergeado correctamente por fecha
+    exacta -- ver bloque mas abajo -- sin este bug), para toda semana cuyo
+    lunes caiga dentro del rango cubierto por daily_data. Las semanas viejas
+    (antes de Junio, que vienen de otra fuente -- VTAS_SEMANALES -- y no
+    tienen daily_data) se dejan intactas, sin tocar."""
     months = defaultdict(lambda: defaultdict(float))   # mes_nombre   -> {branch_key: imp}
     months_desc = defaultdict(lambda: defaultdict(float))   # mes_nombre -> {branch_key: desc}
     month_dias = defaultdict(set)                       # mes_nombre -> {fechas con datos}
@@ -299,8 +316,6 @@ def rebuild_weekly_monthly(master, daily_by_branch, daily_desc_by_branch, args):
     for branch, dailymap in daily_by_branch.items():
         key = WK_KEY.get(branch, branch)
         for d, imp in dailymap.items():
-            wl, _ = _semana_label(d)
-            weeks[wl][key] += imp
             mn = MESES_ES[d.month]
             months[mn][key] += imp
             month_dias[mn].add(d)
@@ -308,8 +323,6 @@ def rebuild_weekly_monthly(master, daily_by_branch, daily_desc_by_branch, args):
     for branch, descmap in daily_desc_by_branch.items():
         key = WK_KEY.get(branch, branch)
         for d, v in descmap.items():
-            wl, _ = _semana_label(d)
-            weeks_desc[wl][key] += v
             mn = MESES_ES[d.month]
             months_desc[mn][key] += v
 
@@ -343,23 +356,9 @@ def rebuild_weekly_monthly(master, daily_by_branch, daily_desc_by_branch, args):
             out["Total_desc"] = out.get("SRL_desc", 0) + out.get("Franquicias_desc", 0)
         return out
 
-    # --- merge semanal: pisa solo sucursales tocadas, preserva el resto ---
-    existentes = {w["semana"]: i for i, w in enumerate(master.get("weekly", []))}
-    weekly_list = list(master.get("weekly", []))
-    for wl, d in weeks.items():
-        idx = existentes.get(wl)
-        prev = weekly_list[idx] if idx is not None else {}
-        entry = {"semana": wl, **_merge(prev, d, weeks_desc.get(wl, {}))}
-        if idx is not None:
-            weekly_list[idx] = entry
-        else:
-            weekly_list.append(entry)
-    # orden cronológico real (no alfabético): por (mes, dia) del inicio de semana
     def _wkey(w):
         dd, mm = w["semana"].split(" al ")[0].split(".")
         return (int(mm), int(dd))
-    weekly_list.sort(key=_wkey)
-    master["weekly"] = weekly_list
 
     # --- merge mensual: pisa solo sucursales tocadas, preserva el resto ---
     import calendar
@@ -375,6 +374,74 @@ def rebuild_weekly_monthly(master, daily_by_branch, daily_desc_by_branch, args):
         entry["_parcial"] = dias_con_datos < ndias_mes
         monthly[mn] = entry
     master["monthly"] = monthly
+
+    def _rebuild_weekly_from_daily_data():
+        """Reconstruye 'weekly' desde cero a partir de master['daily_data'],
+        que preserva el detalle dia-por-dia sin el bug de sobreescritura.
+        Solo reemplaza semanas cuyo lunes caiga dentro del rango cubierto por
+        daily_data (Junio en adelante); las semanas mas viejas (Abril/Mayo,
+        fuente VTAS_SEMANALES) quedan intactas."""
+        weeks2 = defaultdict(lambda: defaultdict(float))
+        weeks2_desc = defaultdict(lambda: defaultdict(float))
+        all_dates = []
+        for Pn, rows in master.get("daily_data", {}).items():
+            lbl = master.get("period_meta", {}).get(Pn, {}).get("label", "")
+            anio_p = None
+            for tok in lbl.replace("(", " ").replace(")", " ").replace("–", " ").split():
+                if tok.isdigit() and len(tok) == 4:
+                    anio_p = int(tok); break
+            if anio_p is None:
+                anio_p = int(args.desde.split("-")[0])
+            for row in rows:
+                try:
+                    dd_s, mm_s = row["fecha"].split("/")
+                    d = date(anio_p, int(mm_s), int(dd_s))
+                except Exception:
+                    continue
+                all_dates.append(d)
+                wl, _lunes = _semana_label(d)
+                for branch_internal, wkkey in WK_KEY.items():
+                    if branch_internal in row:
+                        weeks2[wl][wkkey] += row[branch_internal]
+                        dkey = branch_internal + "_desc"
+                        if dkey in row:
+                            weeks2_desc[wl][wkkey] += row[dkey]
+        if not all_dates:
+            return  # sin daily_data todavia (no debería pasar), no tocar nada
+        min_cubierto = min(all_dates)
+
+        existentes = {w["semana"]: i for i, w in enumerate(master.get("weekly", []))}
+        weekly_list = list(master.get("weekly", []))
+        for wl, sums in weeks2.items():
+            dd_s, mm_s = wl.split(" al ")[0].split(".")
+            anio_lunes = min(d.year for d in all_dates)  # un solo año en este dataset
+            try:
+                lunes = date(anio_lunes, int(mm_s), int(dd_s))
+            except Exception:
+                continue
+            if lunes < min_cubierto:
+                continue  # semana anterior a la cobertura de daily_data: no tocar
+            out = {"semana": wl}
+            for k, v in sums.items():
+                out[k] = round(v)
+            srl = sum(out.get(k, 0) for k in SRL_KEYS)
+            fr  = sum(out.get(k, 0) for k in FR_KEYS)
+            out["SRL"] = round(srl); out["Franquicias"] = round(fr); out["Total"] = round(srl + fr)
+            for k, v in weeks2_desc.get(wl, {}).items():
+                out[k + "_desc"] = round(v)
+            if all((k + "_desc") in out for k in SRL_KEYS):
+                out["SRL_desc"] = sum(out.get(k + "_desc", 0) for k in SRL_KEYS)
+            if all((k + "_desc") in out for k in FR_KEYS):
+                out["Franquicias_desc"] = sum(out.get(k + "_desc", 0) for k in FR_KEYS)
+            if all((k + "_desc") in out for k in list(SRL_KEYS) + list(FR_KEYS)):
+                out["Total_desc"] = out.get("SRL_desc", 0) + out.get("Franquicias_desc", 0)
+            idx = existentes.get(wl)
+            if idx is not None:
+                weekly_list[idx] = out
+            else:
+                weekly_list.append(out)
+        weekly_list.sort(key=_wkey)
+        master["weekly"] = weekly_list
 
     # --- daily_data por período: {fecha: {branch: imp, SRL:, Franquicias:, Total:}} ---
     # Acumula por fecha cruzando todas las sucursales del rango
@@ -424,6 +491,8 @@ def rebuild_weekly_monthly(master, daily_by_branch, daily_desc_by_branch, args):
     def _dsort(f):
         d2, m2 = f.split("/"); return (int(m2), int(d2))
     master.setdefault("daily_data", {})[P] = sorted(prev_daily.values(), key=lambda x: _dsort(x["fecha"]))
+
+    _rebuild_weekly_from_daily_data()
 
 # ===========================================================================
 # MEDIOS DE PAGO (restoVentasCuenta) — categorías confirmadas con datos reales
@@ -745,16 +814,26 @@ def rebuild_medios_pago(master, periodo, daily_cuenta_by_branch, dup_by_branch=N
     MISMAS semanas ISO que rebuild_weekly_monthly (_semana_label) para que
     'Medios de Pago' y 'Resumen' coincidan.
 
-    NOTA: el merge semanal acá recalcula desde cero las semanas tocadas en esta
-    corrida -- no tiene el manejo fino de "preservar semana vieja si esta
-    corrida no trajo dato" que sí tiene rebuild_weekly_monthly. Alcanza porque
-    cada corrida trae el rango completo pedido; si en el futuro se corre con
-    rangos parciales día por día, revisar este merge con el mismo cuidado.
+    AUDITORIA 03/08/2026 (Ramiro, hallazgo derivado de la auditoria de weekly):
+    el desglose semanal por sucursal ('semanal') tenia el MISMO bug que
+    tenia 'weekly' antes del fix de esa misma fecha: se recalculaba desde
+    cero solo con los dias tocados en ESTA corrida, así que una semana ISO
+    que cruza fin de mes quedaba con el total de la corrida mas angosta
+    (mes actual) pisando el de la corrida mas ancha (mes anterior).
+    Confirmado con datos reales: Independencia, semana 27.07 al 02.08,
+    sumaba $12.239.713 en 'semanal' -- el mismo numero incompleto que tenia
+    'weekly' antes de corregirse, no el total real de 7 dias.
+
+    Fix: igual que 'weekly', 'semanal' ya no se arma por merge incremental.
+    Se reconstruye desde cero sumando 'diario_turno' (que sí está mergeado
+    correctamente por fecha ISO exacta, sin este bug), para toda semana cuyo
+    lunes caiga dentro del rango cubierto por diario_turno. Semanas mas
+    viejas sin diario_turno quedan intactas.
     """
     mp = master.setdefault("medios_pago", {})
     por_periodo = mp.setdefault("por_periodo", {})
     por_periodo[periodo] = por_periodo.get(periodo, {})
-    semanal = mp.setdefault("semanal", {})  # {branch: {semana_label: {categoria: monto}}}
+    mp.setdefault("semanal", {})  # {branch: {semana_label: {categoria: monto}}} -- se reconstruye al final
     dup_periodo = mp.setdefault("duplicados_excluidos", {}).setdefault(periodo, {})
     sc_periodo = mp.setdefault("sin_clasificar_detalle", {}).setdefault(periodo, {})
     diario_turno = mp.setdefault("diario_turno", {})
@@ -764,15 +843,9 @@ def rebuild_medios_pago(master, periodo, daily_cuenta_by_branch, dup_by_branch=N
         if not dailymap:
             continue  # None (sin dato esta corrida) o {} (sin filas) -> no tocar lo que ya había
         tot_branch = defaultdict(float)
-        sem_branch = semanal.setdefault(branch, {})
-        semanas_tocadas = defaultdict(lambda: defaultdict(float))
         for d, cats in dailymap.items():
-            wl, _ = _semana_label(d)
             for cat, monto in cats.items():
-                semanas_tocadas[wl][cat] += monto
                 tot_branch[cat] += monto
-        for wl, cats in semanas_tocadas.items():
-            sem_branch[wl] = {k: round(v) for k, v in cats.items()}
         por_periodo[periodo][branch] = {k: round(v) for k, v in tot_branch.items()}
         dup = (dup_by_branch or {}).get(branch)
         if dup:
@@ -796,6 +869,36 @@ def rebuild_medios_pago(master, periodo, daily_cuenta_by_branch, dup_by_branch=N
             dt_branch[fecha_iso] = {
                 t: {k: round(v) for k, v in cats.items()} for t, cats in turnos.items()
             }
+
+    # --- reconstruir 'semanal' desde 'diario_turno' (ver auditoria arriba) ---
+    weeks_cats = defaultdict(lambda: defaultdict(lambda: defaultdict(float)))  # wl -> branch -> cat -> monto
+    all_dates = []
+    for Pn, brs in diario_turno.items():
+        for br, fechas in brs.items():
+            for fecha_iso, turnos in fechas.items():
+                try:
+                    d = date.fromisoformat(fecha_iso)
+                except Exception:
+                    continue
+                all_dates.append(d)
+                wl, _ = _semana_label(d)
+                for _turno, cats in turnos.items():
+                    for cat, monto in cats.items():
+                        weeks_cats[wl][br][cat] += monto
+    if all_dates:
+        min_cubierto = min(all_dates)
+        anio_lunes = min(d.year for d in all_dates)
+        sem = mp["semanal"]
+        for wl, by_branch in weeks_cats.items():
+            dd_s, mm_s = wl.split(" al ")[0].split(".")
+            try:
+                lunes = date(anio_lunes, int(mm_s), int(dd_s))
+            except Exception:
+                continue
+            if lunes < min_cubierto:
+                continue  # semana sin cobertura completa de diario_turno: no tocar
+            for br, cats in by_branch.items():
+                sem.setdefault(br, {})[wl] = {k: round(v) for k, v in cats.items()}
 
 
 def chequear_concentracion_turno(master, periodo, umbral_pct=95.0):
