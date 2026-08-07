@@ -990,8 +990,24 @@ def audit(branch, A, R):
 def rebuild_peya(master, P, py_by_branch, tot_by_branch, daily_cupon_py_by_branch, args):
     peya     = master.get("peya", {})
     rango    = fmt_rango(args.desde, args.hasta)
-    # Template de promos: buscar en período existente o legacy plano
-    _peya_template = peya.get(P) or next((v for v in peya.values() if isinstance(v, dict) and "promos" in v), peya)
+    # Template de promos: si el período actual ya tiene datos, usar los propios.
+    # Si es un período nuevo (recién arrancó el mes), tomar el MÁS RECIENTE que
+    # tenga "promos" recorriendo master["periods"] en reversa -- mismo fix ya
+    # aplicado en rebuild_especial2026 el 26/07, necesario porque un dict no
+    # garantiza orden cronológico y una promo agregada a mano en el período más
+    # nuevo se perdía en el próximo rebuild si un período viejo era el primero
+    # en iterarse.
+    _peya_template = peya.get(P)
+    if _peya_template is None:
+        for k in reversed(master.get("periods", [])):
+            if k == P:
+                continue
+            v = peya.get(k)
+            if isinstance(v, dict) and "promos" in v:
+                _peya_template = v
+                break
+    if _peya_template is None:
+        _peya_template = next((v for v in peya.values() if isinstance(v, dict) and "promos" in v), peya)
     net_tot  = sum(tot_by_branch.values())
 
     br_out   = {}; dias_net = defaultdict(lambda:[0.0,0.0])
