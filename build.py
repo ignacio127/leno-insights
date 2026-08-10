@@ -29,7 +29,7 @@ HTML = r'''<!DOCTYPE html>
 *{font-family:var(--font-body);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 body{background:var(--bg);color:var(--txt);background-image:radial-gradient(1100px 560px at 100% -6%,rgba(79,70,229,.045),transparent),radial-gradient(820px 460px at -6% 0,rgba(226,0,26,.035),transparent);background-attachment:fixed}
 h1,h2,h3{letter-spacing:-.015em;font-family:var(--font-display)}
-#brandTitle{font-family:var(--font-display)}
+#brandTitle{font-family:var(--font-display);font-size:1.55rem;line-height:1.2}
 .tnum{font-variant-numeric:tabular-nums}
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh1)}
 .card.lift{transition:box-shadow .2s,transform .2s}
@@ -38,7 +38,7 @@ h1,h2,h3{letter-spacing:-.015em;font-family:var(--font-display)}
 .kpi:hover{transform:translateY(-2px);box-shadow:var(--sh3)}
 .kpi::before{content:'';position:absolute;left:0;top:0;height:3px;width:100%;background:var(--acc,#E2001A)}
 .kpi .kl{font-size:10.5px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}
-.kpi .kv{font-size:30px;font-weight:800;letter-spacing:-.025em;line-height:1.05;color:var(--txt);font-variant-numeric:tabular-nums;font-family:var(--font-display)}
+.kpi .kv{font-size:40px;font-weight:800;letter-spacing:-.01em;line-height:1.15;color:var(--txt);font-variant-numeric:tabular-nums;font-family:var(--font-display)}
 ::-webkit-scrollbar{width:9px;height:9px}::-webkit-scrollbar-thumb{background:#cfd4de;border-radius:8px}::-webkit-scrollbar-thumb:hover{background:#b9bfcb}::-webkit-scrollbar-track{background:transparent}
 .navi{transition:.15s;border-left:3px solid transparent;color:#565b66;cursor:pointer;border-radius:0 8px 8px 0;margin-right:8px}
 .navi:hover{background:#eef0f5;color:var(--txt)}
@@ -53,7 +53,7 @@ table{border-collapse:collapse;width:100%}
 .click{cursor:pointer;transition:.12s}.click:hover{background:#f7f8fa}
 .sel{font-size:.8rem;padding:.45rem .8rem;border-radius:.6rem;background:#fff;border:1px solid var(--line);color:var(--txt);font-weight:500;box-shadow:var(--sh1);cursor:pointer;transition:.15s}
 .sel:hover{border-color:#d3d7e0}.sel:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px rgba(79,70,229,.16)}
-.secttl{font-size:1.3rem;font-weight:800;letter-spacing:-.025em;font-family:var(--font-display)}
+.secttl{font-size:1.75rem;font-weight:800;letter-spacing:-.01em;line-height:1.2;font-family:var(--font-display)}
 .hbtn{cursor:pointer;padding:.45rem .85rem;border-radius:.6rem;font-size:.75rem;font-weight:600;transition:.15s;background:#fff;border:1px solid var(--line);color:var(--txt2);box-shadow:var(--sh1)}
 .hbtn:hover{background:#f7f8fa;border-color:#d3d7e0}
 #modal{position:fixed;inset:0;background:rgba(16,20,28,.5);display:none;align-items:center;justify-content:center;z-index:50;padding:24px;backdrop-filter:blur(2px)}#modal.on{display:flex}
@@ -75,7 +75,7 @@ table{border-collapse:collapse;width:100%}
   main{width:100%}
   /* header compacto */
   header{padding:10px 14px!important}
-  header h1.secttl{font-size:1rem!important}
+  header h1.secttl{font-size:1.35rem!important}
   header p#secScope{font-size:.65rem!important}
   #periodChip{display:none}
   #hoy{display:none}
@@ -90,7 +90,7 @@ table{border-collapse:collapse;width:100%}
   .grid-cols-4,.grid-cols-3{grid-template-columns:repeat(2,minmax(0,1fr))!important}
   .grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))!important}
   /* KPI valor más chico */
-  .kpi .kv{font-size:22px!important}
+  .kpi .kv{font-size:30px!important}
   .kpi .kl{font-size:9.5px!important}
   .kpi{padding:14px!important}
   /* banner hero: más bajo */
@@ -110,7 +110,7 @@ table{border-collapse:collapse;width:100%}
   footer{padding:16px 14px!important;font-size:.62rem!important}
 }
 @media(max-width:480px){
-  .kpi .kv{font-size:18px!important}
+  .kpi .kv{font-size:24px!important}
   .kpi{padding:11px!important}
   canvas{max-height:180px!important}
   .promoHero{height:90px!important}
@@ -299,7 +299,7 @@ function kpi(label,val,sub,delta,color){let d='';if(delta!==undefined){const up=
 function note(t){return '<div class="text-[12px] mt-3 px-4 py-2.5 rounded-lg flex gap-2" style="background:#fff7ed;border:1px solid #fed7aa;color:#9a3412">ℹ️ <span>'+t+'</span></div>';}
 const histBanner='<div class="text-[12px] mb-4 px-4 py-2.5 rounded-lg flex gap-2" style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af">📅 <span>Vista <b>histórica de cadena</b> (todas las sucursales, '+rangoHistoricoChip()+'). No cambia con el selector de período.</span></div>';
 function insight(c,t,d){return '<div class="rounded-lg p-3" style="background:#fafbfc;border:1px solid var(--line);border-left:3px solid '+c+'"><div class="font-semibold mb-0.5">'+t+'</div><div style="color:var(--mut)">'+d+'</div></div>';}
-function promoHero(img,name,sub,pos){return '<div class="promoHero mb-4" style="position:relative;height:144px;border-radius:1.1rem;overflow:hidden;border:1px solid var(--line)"><img src="'+img+'" style="width:100%;height:100%;object-fit:cover;object-position:'+(pos||'center 58%')+';display:block"/><div style="position:absolute;inset:0;background:linear-gradient(90deg,rgba(10,14,30,.82) 0%,rgba(10,14,30,.46) 55%,rgba(10,14,30,.12) 100%)"></div><div style="position:absolute;left:22px;bottom:18px;right:18px"><div style="color:#fff;font-size:22px;font-weight:800;letter-spacing:-.01em;text-shadow:0 2px 8px rgba(0,0,0,.45);line-height:1.1;font-family:var(--font-display)">'+name+'</div><div style="color:rgba(255,255,255,.92);font-size:13px;font-weight:600;margin-top:3px;text-shadow:0 1px 4px rgba(0,0,0,.5)">'+sub+'</div></div></div>';}
+function promoHero(img,name,sub,pos){return '<div class="promoHero mb-4" style="position:relative;height:144px;border-radius:1.1rem;overflow:hidden;border:1px solid var(--line)"><img src="'+img+'" style="width:100%;height:100%;object-fit:cover;object-position:'+(pos||'center 58%')+';display:block"/><div style="position:absolute;inset:0;background:linear-gradient(90deg,rgba(10,14,30,.82) 0%,rgba(10,14,30,.46) 55%,rgba(10,14,30,.12) 100%)"></div><div style="position:absolute;left:22px;bottom:18px;right:18px"><div style="color:#fff;font-size:32px;font-weight:800;letter-spacing:-.005em;text-shadow:0 2px 8px rgba(0,0,0,.45);line-height:1.15;font-family:var(--font-display)">'+name+'</div><div style="color:rgba(255,255,255,.92);font-size:13px;font-weight:600;margin-top:3px;text-shadow:0 1px 4px rgba(0,0,0,.5)">'+sub+'</div></div></div>';}
 const RENDER={};
 
 let resScope='ALL';
