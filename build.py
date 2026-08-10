@@ -10,6 +10,9 @@ HTML = r'''<!DOCTYPE html>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LENO Insights · Control de Gestión</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.cdnfonts.com">
+<link href="https://fonts.cdnfonts.com/css/morganite" rel="stylesheet">
+<link href="https://fonts.cdnfonts.com/css/argentum-sans" rel="stylesheet">
 <style id="tw">__TWCSS__</style>
 <style>
 :root{
@@ -20,10 +23,13 @@ HTML = r'''<!DOCTYPE html>
  --r:14px;--r-sm:10px;--r-lg:18px;
  --sh1:0 1px 2px rgba(16,24,40,.05);
  --sh2:0 1px 3px rgba(16,24,40,.06),0 10px 26px -10px rgba(16,24,40,.12);
- --sh3:0 18px 40px -12px rgba(16,24,40,.20);}
-*{font-family:'Inter',ui-sans-serif,system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+ --sh3:0 18px 40px -12px rgba(16,24,40,.20);
+ --font-display:'Morganite','Inter',ui-sans-serif,system-ui,-apple-system,sans-serif;
+ --font-body:'Argentum Sans','Inter',ui-sans-serif,system-ui,-apple-system,sans-serif;}
+*{font-family:var(--font-body);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 body{background:var(--bg);color:var(--txt);background-image:radial-gradient(1100px 560px at 100% -6%,rgba(79,70,229,.045),transparent),radial-gradient(820px 460px at -6% 0,rgba(226,0,26,.035),transparent);background-attachment:fixed}
-h1,h2,h3{letter-spacing:-.015em}
+h1,h2,h3{letter-spacing:-.015em;font-family:var(--font-display)}
+#brandTitle{font-family:var(--font-display)}
 .tnum{font-variant-numeric:tabular-nums}
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh1)}
 .card.lift{transition:box-shadow .2s,transform .2s}
@@ -32,7 +38,7 @@ h1,h2,h3{letter-spacing:-.015em}
 .kpi:hover{transform:translateY(-2px);box-shadow:var(--sh3)}
 .kpi::before{content:'';position:absolute;left:0;top:0;height:3px;width:100%;background:var(--acc,#E2001A)}
 .kpi .kl{font-size:10.5px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}
-.kpi .kv{font-size:30px;font-weight:800;letter-spacing:-.025em;line-height:1.05;color:var(--txt);font-variant-numeric:tabular-nums}
+.kpi .kv{font-size:30px;font-weight:800;letter-spacing:-.025em;line-height:1.05;color:var(--txt);font-variant-numeric:tabular-nums;font-family:var(--font-display)}
 ::-webkit-scrollbar{width:9px;height:9px}::-webkit-scrollbar-thumb{background:#cfd4de;border-radius:8px}::-webkit-scrollbar-thumb:hover{background:#b9bfcb}::-webkit-scrollbar-track{background:transparent}
 .navi{transition:.15s;border-left:3px solid transparent;color:#565b66;cursor:pointer;border-radius:0 8px 8px 0;margin-right:8px}
 .navi:hover{background:#eef0f5;color:var(--txt)}
@@ -47,7 +53,7 @@ table{border-collapse:collapse;width:100%}
 .click{cursor:pointer;transition:.12s}.click:hover{background:#f7f8fa}
 .sel{font-size:.8rem;padding:.45rem .8rem;border-radius:.6rem;background:#fff;border:1px solid var(--line);color:var(--txt);font-weight:500;box-shadow:var(--sh1);cursor:pointer;transition:.15s}
 .sel:hover{border-color:#d3d7e0}.sel:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px rgba(79,70,229,.16)}
-.secttl{font-size:1.3rem;font-weight:800;letter-spacing:-.025em}
+.secttl{font-size:1.3rem;font-weight:800;letter-spacing:-.025em;font-family:var(--font-display)}
 .hbtn{cursor:pointer;padding:.45rem .85rem;border-radius:.6rem;font-size:.75rem;font-weight:600;transition:.15s;background:#fff;border:1px solid var(--line);color:var(--txt2);box-shadow:var(--sh1)}
 .hbtn:hover{background:#f7f8fa;border-color:#d3d7e0}
 #modal{position:fixed;inset:0;background:rgba(16,20,28,.5);display:none;align-items:center;justify-content:center;z-index:50;padding:24px;backdrop-filter:blur(2px)}#modal.on{display:flex}
@@ -116,7 +122,7 @@ table{border-collapse:collapse;width:100%}
 <aside id="sidebar" class="w-60 shrink-0 min-h-screen border-r sticky top-0 h-screen overflow-y-auto bg-white" style="border-color:var(--line)">
   <div class="p-5 flex items-center gap-3 border-b" style="border-color:var(--line)">
      <div class="w-14 h-14 rounded-xl bg-white border flex items-center justify-center overflow-hidden shrink-0" style="border-color:var(--line);box-shadow:var(--sh1)"><img id="logoLeno" class="w-12 h-12 object-contain"/></div>
-     <div class="min-w-0"><div class="font-extrabold tracking-tight leading-none text-lg">LENO Insights</div><div class="text-[11px] mt-1" style="color:var(--mut)">Control de Gestión</div></div></div>
+     <div class="min-w-0"><div id="brandTitle" class="font-extrabold tracking-tight leading-none text-lg">LENO Insights</div><div class="text-[11px] mt-1" style="color:var(--mut)">Control de Gestión</div></div></div>
   <nav class="py-3 text-sm" id="nav"></nav>
   <div id="lastUpdateBox" class="px-4 pb-1 pt-2 mt-1 border-t" style="border-color:var(--line)"></div>
   <div class="px-4 pb-4 pt-3 mt-1 border-t" style="border-color:var(--line)">
@@ -245,7 +251,7 @@ function mesParcialLabel(){
  return p||null;
 }
 function mkChart(id,cfg){if(charts[id])charts[id].destroy();const el=document.getElementById(id);if(el)charts[id]=new Chart(el,cfg);}
-Chart.defaults.color='#71757f';Chart.defaults.font.family='Inter';Chart.defaults.borderColor='#e7e9ee';
+Chart.defaults.color='#71757f';Chart.defaults.font.family="'Argentum Sans','Inter',sans-serif";Chart.defaults.borderColor='#e7e9ee';
 const LINE='#e7e9ee';
 function pbranches(){return DATA.period_meta[PERIOD].branches;}
 function mergeDict(brs,field){const o={};brs.forEach(b=>{const a=DATA.analytics[PERIOD][b];if(a&&a[field])Object.entries(a[field]).forEach(([k,v])=>o[k]=(o[k]||0)+v);});return o;}
@@ -293,7 +299,7 @@ function kpi(label,val,sub,delta,color){let d='';if(delta!==undefined){const up=
 function note(t){return '<div class="text-[12px] mt-3 px-4 py-2.5 rounded-lg flex gap-2" style="background:#fff7ed;border:1px solid #fed7aa;color:#9a3412">ℹ️ <span>'+t+'</span></div>';}
 const histBanner='<div class="text-[12px] mb-4 px-4 py-2.5 rounded-lg flex gap-2" style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af">📅 <span>Vista <b>histórica de cadena</b> (todas las sucursales, '+rangoHistoricoChip()+'). No cambia con el selector de período.</span></div>';
 function insight(c,t,d){return '<div class="rounded-lg p-3" style="background:#fafbfc;border:1px solid var(--line);border-left:3px solid '+c+'"><div class="font-semibold mb-0.5">'+t+'</div><div style="color:var(--mut)">'+d+'</div></div>';}
-function promoHero(img,name,sub,pos){return '<div class="promoHero mb-4" style="position:relative;height:144px;border-radius:1.1rem;overflow:hidden;border:1px solid var(--line)"><img src="'+img+'" style="width:100%;height:100%;object-fit:cover;object-position:'+(pos||'center 58%')+';display:block"/><div style="position:absolute;inset:0;background:linear-gradient(90deg,rgba(10,14,30,.82) 0%,rgba(10,14,30,.46) 55%,rgba(10,14,30,.12) 100%)"></div><div style="position:absolute;left:22px;bottom:18px;right:18px"><div style="color:#fff;font-size:22px;font-weight:800;letter-spacing:-.01em;text-shadow:0 2px 8px rgba(0,0,0,.45);line-height:1.1">'+name+'</div><div style="color:rgba(255,255,255,.92);font-size:13px;font-weight:600;margin-top:3px;text-shadow:0 1px 4px rgba(0,0,0,.5)">'+sub+'</div></div></div>';}
+function promoHero(img,name,sub,pos){return '<div class="promoHero mb-4" style="position:relative;height:144px;border-radius:1.1rem;overflow:hidden;border:1px solid var(--line)"><img src="'+img+'" style="width:100%;height:100%;object-fit:cover;object-position:'+(pos||'center 58%')+';display:block"/><div style="position:absolute;inset:0;background:linear-gradient(90deg,rgba(10,14,30,.82) 0%,rgba(10,14,30,.46) 55%,rgba(10,14,30,.12) 100%)"></div><div style="position:absolute;left:22px;bottom:18px;right:18px"><div style="color:#fff;font-size:22px;font-weight:800;letter-spacing:-.01em;text-shadow:0 2px 8px rgba(0,0,0,.45);line-height:1.1;font-family:var(--font-display)">'+name+'</div><div style="color:rgba(255,255,255,.92);font-size:13px;font-weight:600;margin-top:3px;text-shadow:0 1px 4px rgba(0,0,0,.5)">'+sub+'</div></div></div>';}
 const RENDER={};
 
 let resScope='ALL';
@@ -755,7 +761,8 @@ function vdPrint(){
     : exactoAlguno ? 'Mixto: días recientes con descuento real, días previos con desc. proporcional del período'
     : 'Descuentos aplicados proporcionalmente ('+(100-ratio*100).toFixed(1)+'% del período) — dato histórico previo al fix';
   w.document.write('<html><head><title>Ventas Netas por Día · '+scope+' · '+pm.label+'</title>'
-    +'<style>body{font-family:system-ui,sans-serif;padding:28px;color:#111}h2{margin:0 0 4px}p{margin:0 0 6px;color:#666;font-size:13px}.note{font-size:11px;color:#9ca3af;margin-bottom:20px}'
+    +'<link href="https://fonts.cdnfonts.com/css/morganite" rel="stylesheet"><link href="https://fonts.cdnfonts.com/css/argentum-sans" rel="stylesheet">'
+    +'<style>body{font-family:\'Argentum Sans\',system-ui,sans-serif;padding:28px;color:#111}h2{margin:0 0 4px;font-family:\'Morganite\',system-ui,sans-serif}p{margin:0 0 6px;color:#666;font-size:13px}.note{font-size:11px;color:#9ca3af;margin-bottom:20px}'
     +'table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;padding:8px 12px;border-bottom:2px solid #e5e7eb;color:#666;font-size:11px}'
     +'td{padding:7px 12px;border-bottom:1px solid #e5e7eb}.r{text-align:right}.g{color:#16a34a}.r2{color:#e11d48}'
     +'tfoot td{font-weight:700;border-top:2px solid #e5e7eb}</style></head><body>'
