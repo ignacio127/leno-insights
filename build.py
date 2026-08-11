@@ -1136,9 +1136,15 @@ RENDER.especial2026=()=>{const E=(DATA.especial2026||{})[PERIOD];const el=docume
  el.innerHTML=html;
 };
 
-RENDER.burgerday=()=>{const buckets={};let bkTot=0,bkU=0;
- pbranches().forEach(b=>{const items=(DATA.rankings[PERIOD][b]&&DATA.rankings[PERIOD][b].items)||[];items.forEach(it=>{if(it.cat==='Leno Buckets'){buckets[b]=(buckets[b]||0)+it.imp;bkTot+=it.imp;bkU+=it.u;}});});
- const arr=Object.entries(buckets).sort((a,b)=>b[1]-a[1]);const mx=arr.length?arr[0][1]:1;const ham=(DATA.cat[PERIOD]['Hamburguesas']||{imp:0}).imp;const el=document.getElementById('sec-burgerday');
+RENDER.burgerday=()=>{const buckets={};let bkTot=0,bkU=0,ham=0;
+ // FIX 11/08/2026 (Ramiro): antes usaba DATA.cat[PERIOD]['Hamburguesas'], pero DATA.cat
+ // lo llena un proceso aparte que no corre para todos los períodos (mismo problema que
+ // ya se había diagnosticado y parcheado en RENDER.categorias el 24/07/2026). Para Agosto
+ // DATA.cat['Agosto'] no existe -> undefined['Hamburguesas'] tiraba TypeError y la sección
+ // se quedaba sin actualizar. Se recalcula "Hamburguesas" en vivo desde DATA.rankings[PERIOD],
+ // que sí se reconstruye completo cada corrida (mismo criterio que Categorías).
+ pbranches().forEach(b=>{const items=(DATA.rankings[PERIOD][b]&&DATA.rankings[PERIOD][b].items)||[];items.forEach(it=>{if(it.cat==='Leno Buckets'){buckets[b]=(buckets[b]||0)+it.imp;bkTot+=it.imp;bkU+=it.u;}else if(it.cat==='Hamburguesas'){ham+=it.imp;}});});
+ const arr=Object.entries(buckets).sort((a,b)=>b[1]-a[1]);const mx=arr.length?arr[0][1]:1;const el=document.getElementById('sec-burgerday');
  el.innerHTML=promoHero(IMG.burgerday,'LENO Buckets',Fm(bkTot)+' · '+bkU.toLocaleString('es-AR')+' combos','center 83%')+
   '<div class="grid grid-cols-1 md:grid-cols-3 gap-4">'+kpi('Facturación Buckets',Fm(bkTot),DATA.period_meta[PERIOD].label,undefined,'#E2001A')+kpi('Unidades Buckets',bkU.toLocaleString('es-AR'),'combos',undefined,'#f59e0b')+kpi('% sobre Hamburguesas',(ham+bkTot>0?(bkTot/(ham+bkTot)*100).toFixed(1):'0')+'%','peso del formato',undefined,'#8b5cf6')+'</div>'+
   '<div class="card p-5 mt-4"><div class="font-semibold mb-4">Buckets por sucursal '+CROWN+'</div>'+(arr.length?arr.map(([b,v],i)=>'<div class="mb-3"><div class="flex justify-between text-sm mb-1"><span>'+b+(i===0?' '+CROWN:'')+'</span><span class="font-semibold">'+Fm(v)+'</span></div><div class="h-3 rounded-full" style="background:#f0f1f4"><div class="h-full rounded-full" style="width:'+(v/mx*100)+'%;background:'+PAL[i%PAL.length]+'"></div></div></div>').join(''):'<div class="text-sm" style="color:var(--mut)">Sin ventas de Buckets en este período.</div>')+note('En la vista Consolidado del Ranking, “X4 Cheeseburger con papas” se suma a “Leno Buckets Cheeseburger X4”.')+'</div>';
