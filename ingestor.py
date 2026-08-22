@@ -24,7 +24,16 @@ BRANCHES = [
     ("Leno S.R.L.",      "8", "Barrio Norte",  "SRL"),
     ("Leno S.R.L.",      "6", "Tafi Viejo",    "SRL"),
     ("Blend S.A.S.",     "1", "Independencia", "Franquicias"),
-    ("FRANQUICIAR SAS",  "1", "Barrio Sur",    "Franquicias"),
+    # FIX 22/08/2026 (Ramiro, confirmado con Power Query real contra la API):
+    # Gesdatta renombró esta cuenta de "FRANQUICIAR SAS" a "Franquiciar S.A.S."
+    # entre el 12/08 y el 13/08/2026. El matching de cliente es por string
+    # EXACTO (mismo patrón que ya motivó ALIAS_SUCURSAL para Barrio Norte/
+    # "RIVADAVIA") -- con el string viejo, la API devolvía 200 OK y
+    # "datos": [] sin ningún error, 27 corridas seguidas, mientras Barrio Sur
+    # seguía operando con normalidad y accesos generales a Gesdatta estaban
+    # OK. hours_stale llegó a 215.1h antes de detectarse. Ver
+    # claude/fix_barrio_sur_gesdatta_22-08-2026.md para el diagnóstico completo.
+    ("Franquiciar S.A.S.", "1", "Barrio Sur",    "Franquicias"),
     ("Mafra S.A.S.",     "1", "Peron",         "Franquicias"),
     ("Mafra S.A.S.",     "2", "FLIP",          "Franquicias"),
 ]
